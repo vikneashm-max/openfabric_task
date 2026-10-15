@@ -19,7 +19,6 @@ class OutboxDispatcher(
     private val logger = LoggerFactory.getLogger(OutboxDispatcher::class.java)
 
     @Scheduled(fixedDelay = 1000)
-    @Transactional
     fun dispatchPendingTransactions() {
         val pending = outboxRepository
             .findTop100ByStatusOrderByCreatedAtAsc(OutboxStatus.PENDING)
@@ -38,8 +37,8 @@ class OutboxDispatcher(
                     .rightPush("transaction:queue", item.transactionId)
 
                 // The worker changes this status when it starts processing.
-                // Avoid re-dispatching it during the short worker polling window.
-                item.nextAttemptAt = now.plusSeconds(5)
+                // Avoid re-dispatching it while waiting in the worker queue.
+                item.nextAttemptAt = now.plusSeconds(30)
                 outboxRepository.save(item)
 
                 logger.info(

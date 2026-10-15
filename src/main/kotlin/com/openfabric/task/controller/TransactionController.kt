@@ -4,6 +4,7 @@ package com.openfabric.task.controller
 import com.openfabric.task.dto.CreateTransactionRequest
 import com.openfabric.task.entity.TransactionEntity
 import com.openfabric.task.service.TransactionService
+import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
@@ -21,7 +22,7 @@ class TransactionController(
 
     @PostMapping
     fun submitTransaction(
-        @RequestBody request: CreateTransactionRequest
+        @Valid @RequestBody request: CreateTransactionRequest
     ): ResponseEntity<TransactionEntity> {
         val transaction = transactionService.submitTransaction(request)
 

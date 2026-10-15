@@ -7,12 +7,11 @@ import com.openfabric.task.repository.OutboxRepository
 import com.openfabric.task.repository.TransactionRepository
 import org.slf4j.LoggerFactory
 import org.springframework.data.redis.core.StringRedisTemplate
-import org.springframework.http.MediaType
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
+import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.client.HttpClientErrorException
 import java.time.Instant
-
 
 @Component
 class TransactionWorker(
@@ -23,7 +22,6 @@ class TransactionWorker(
 ) {
 
     private val logger = LoggerFactory.getLogger(TransactionWorker::class.java)
-
 
     @Scheduled(fixedDelay = 200)
     fun processNextTransaction() {
@@ -53,17 +51,25 @@ class TransactionWorker(
 
         val processingStartedAt = Instant.now()
         val workerId = java.util.UUID.randomUUID().toString()
+        val lockedUntil = processingStartedAt.plusSeconds(30)
 
-        
+        // Atomically claim the outbox record
+        val rowsUpdated = outboxRepository.claimForProcessing(
+            transactionId,
+            OutboxStatus.PENDING,
+            OutboxStatus.PROCESSING,
+            lockedUntil,
+            workerId
+        )
+
+        if (rowsUpdated == 0) {
+            logger.warn("Transaction {} already claimed by another worker; skipping", transactionId)
+            return
+        }
+
         transaction.status = TransactionStatus.PROCESSING
         transaction.attemptCount += 1
         transactionRepository.save(transaction)
-
-        outbox.status = OutboxStatus.PROCESSING
-        outbox.attemptCount += 1
-        outbox.lockedUntil = processingStartedAt.plusSeconds(30)
-        outbox.workerId = workerId
-        outboxRepository.save(outbox)
 
         try {
             val payload = mapOf(
@@ -88,7 +94,8 @@ class TransactionWorker(
         }
     }
 
-    private fun markCompleted(transactionId: String) {
+    @Transactional
+    fun markCompleted(transactionId: String) {
         val transaction = transactionRepository.findById(transactionId)
             .orElse(null) ?: return
 
@@ -109,7 +116,8 @@ class TransactionWorker(
         logger.info("Transaction {} completed", transactionId)
     }
 
-    private fun reconcileAfterPostFailure(
+    @Transactional
+    fun reconcileAfterPostFailure(
         transactionId: String,
         postException: Exception
     ) {
@@ -118,7 +126,10 @@ class TransactionWorker(
             postingGateway.verifyTransactionExists(transactionId)   
 
             markCompleted(transactionId)
-        } catch (notFound: HttpClientErrorException.NotFound) {
+        } catch (notFound: HttpClientErrorException) {
+            if (notFound.statusCode != org.springframework.http.HttpStatus.NOT_FOUND) {
+                throw notFound
+            }
             // Only a confirmed 404 permits another attempt.
             val transaction = transactionRepository.findById(transactionId)
                 .orElse(null) ?: return
@@ -132,15 +143,21 @@ class TransactionWorker(
             if (outbox.attemptCount < 5) {
                 transaction.status = TransactionStatus.PENDING
                 outbox.status = OutboxStatus.PENDING
+                outbox.lockedUntil = null
+                outbox.workerId = null
+                val backoffSeconds = (2L * outbox.attemptCount).coerceAtLeast(2L)
+                outbox.nextAttemptAt = Instant.now().plusSeconds(backoffSeconds)
 
                 logger.warn(
-                    "Transaction {} was not found remotely; attempt {} of 5",
+                    "Transaction {} was not found remotely; attempt {} of 5 scheduled with backoff",
                     transactionId,
                     outbox.attemptCount
                 )
             } else {
                 transaction.status = TransactionStatus.FAILED
                 outbox.status = OutboxStatus.FAILED
+                outbox.lockedUntil = null
+                outbox.workerId = null
 
                 logger.error(
                     "Transaction {} exhausted its attempts",
@@ -185,8 +202,8 @@ class TransactionWorker(
         }
     }
     
-@Scheduled(fixedDelay = 10000)
-fun recoverExpiredTransactions() {
+    @Scheduled(fixedDelay = 10000)
+    fun recoverExpiredTransactions() {
         logger.info("Recovery check started")
         val now = Instant.now()
 
@@ -221,7 +238,10 @@ fun recoverExpiredTransactions() {
                     "Recovered transaction {}: it exists remotely",
                     transactionId
                 )
-            } catch (exception: HttpClientErrorException.NotFound) {
+            } catch (exception: HttpClientErrorException) {
+                if (exception.statusCode != org.springframework.http.HttpStatus.NOT_FOUND) {
+                    throw exception
+                }
                 val transaction = transactionRepository
                     .findById(transactionId)
                     .orElse(null) ?: continue
@@ -256,8 +276,10 @@ fun recoverExpiredTransactions() {
                     transactionId,
                     exception
                 )
+                outbox.lockedUntil = now.plusSeconds(30)
+                outboxRepository.save(outbox)
             }
         }
     }
-
 }
+
