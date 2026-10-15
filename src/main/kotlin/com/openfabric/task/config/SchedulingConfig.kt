@@ -15,7 +15,7 @@ import org.springframework.scheduling.config.ScheduledTaskRegistrar
 @EnableScheduling
 @ConditionalOnProperty(name = ["app.scheduling.enabled"], havingValue = "true", matchIfMissing = true)
 class SchedulingConfig(
-    @Value("\${spring.task.scheduling.pool.size:10}")
+    @Value("\${spring.task.scheduling.pool.size:3}")
     private val poolSize: Int
 ) : SchedulingConfigurer {
 

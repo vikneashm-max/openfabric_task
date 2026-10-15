@@ -2,7 +2,9 @@
 package com.openfabric.task.service
 
 import com.openfabric.task.entity.OutboxStatus
+import com.openfabric.task.entity.TransactionStatus
 import com.openfabric.task.repository.OutboxRepository
+import com.openfabric.task.repository.TransactionRepository
 import org.slf4j.LoggerFactory
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.scheduling.annotation.Scheduled
@@ -13,7 +15,8 @@ import java.time.Instant
 @Component
 class OutboxDispatcher(
     private val outboxRepository: OutboxRepository,
-    private val redisTemplate: StringRedisTemplate
+    private val redisTemplate: StringRedisTemplate,
+    private val transactionRepository: TransactionRepository? = null
 ) {
 
     private val logger = LoggerFactory.getLogger(OutboxDispatcher::class.java)
@@ -30,6 +33,42 @@ class OutboxDispatcher(
             // Don't dispatch a transaction before its retry time.
             if (item.nextAttemptAt?.isAfter(now) == true) {
                 continue
+            }
+
+            if (transactionRepository != null) {
+                val transaction = transactionRepository.findById(item.transactionId).orElse(null)
+                if (transaction == null) {
+                    logger.error(
+                        "Transaction {} not found in database; marking outbox record FAILED",
+                        item.transactionId
+                    )
+                    item.status = OutboxStatus.FAILED
+                    item.lastError = "Transaction record not found in database"
+                    item.lockedUntil = null
+                    item.workerId = null
+                    outboxRepository.save(item)
+                    continue
+                } else if (transaction.status == TransactionStatus.COMPLETED) {
+                    logger.warn(
+                        "Transaction {} is already COMPLETED; syncing outbox status",
+                        item.transactionId
+                    )
+                    item.status = OutboxStatus.COMPLETED
+                    item.lockedUntil = null
+                    item.workerId = null
+                    outboxRepository.save(item)
+                    continue
+                } else if (transaction.status == TransactionStatus.FAILED) {
+                    logger.warn(
+                        "Transaction {} is already FAILED; syncing outbox status",
+                        item.transactionId
+                    )
+                    item.status = OutboxStatus.FAILED
+                    item.lockedUntil = null
+                    item.workerId = null
+                    outboxRepository.save(item)
+                    continue
+                }
             }
 
             try {
