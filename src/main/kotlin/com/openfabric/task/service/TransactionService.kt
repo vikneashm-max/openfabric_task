@@ -38,15 +38,17 @@ class TransactionService(
             }
 
             // Ensure an existing transaction also has work recorded.
-            if (!outboxRepository.existsById(request.id)) {
-                outboxRepository.save(
-                    OutboxEntity(
-                        transactionId = request.id,
-                        status = OutboxStatus.PENDING,
-                        createdAt = Instant.now()
-                    )
-                )
-            }
+            if (transaction.status == TransactionStatus.PENDING &&
+    !outboxRepository.existsById(request.id)
+) {
+    outboxRepository.save(
+        OutboxEntity(
+            transactionId = request.id,
+            status = OutboxStatus.PENDING,
+            createdAt = Instant.now()
+        )
+    )
+}
 
             return transaction
         }

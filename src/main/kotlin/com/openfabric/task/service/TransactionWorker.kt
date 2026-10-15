@@ -54,6 +54,7 @@ class TransactionWorker(
         }
 
         val processingStartedAt = Instant.now()
+        val workerId = java.util.UUID.randomUUID().toString()
 
         
         transaction.status = TransactionStatus.PROCESSING
@@ -63,6 +64,7 @@ class TransactionWorker(
         outbox.status = OutboxStatus.PROCESSING
         outbox.attemptCount += 1
         outbox.lockedUntil = processingStartedAt.plusSeconds(30)
+        outbox.workerId = workerId
         outboxRepository.save(outbox)
 
         try {
@@ -106,6 +108,8 @@ class TransactionWorker(
         transactionRepository.save(transaction)
 
         outbox.status = OutboxStatus.COMPLETED
+        outbox.lockedUntil = null
+        outbox.workerId = null
         outbox.lastError = null
         outboxRepository.save(outbox)
 
@@ -189,89 +193,79 @@ class TransactionWorker(
     
 @Scheduled(fixedDelay = 10000)
 fun recoverExpiredTransactions() {
-    logger.info("Recovery check started")
-    val now = Instant.now()
+        logger.info("Recovery check started")
+        val now = Instant.now()
 
-    val expiredTransactions =
-        outboxRepository.findByStatusAndLockedUntilBefore(
-            OutboxStatus.PROCESSING,
-            now
-        )
+        val expiredTransactions =
+            outboxRepository.findByStatusAndLockedUntilBefore(
+                OutboxStatus.PROCESSING,
+                now
+            )
 
-    
-for (outbox in expiredTransactions) {
-    val transactionId = outbox.transactionId
+        val missingLockTransactions =
+            outboxRepository.findByStatusAndLockedUntilIsNull(
+                OutboxStatus.PROCESSING
+            )
 
-    logger.warn(
-        "Found expired processing lock for transaction {}",
-        transactionId
-    )
+        val candidates = (expiredTransactions + missingLockTransactions)
+            .distinctBy { it.transactionId }
 
-    try {
-        postingClient.get()
-            .uri("/transactions/{id}", transactionId)
-            .retrieve()
-            .toBodilessEntity()
+        for (outbox in candidates) {
+            val transactionId = outbox.transactionId
 
-        markCompleted(transactionId)
+            logger.warn(
+                "Checking recovery for transaction {}",
+                transactionId
+            )
 
-        logger.info(
-            "Recovered transaction {}: it already exists remotely",
-            transactionId
-        )
-    } catch (exception: HttpClientErrorException.NotFound) {
-        val transaction = transactionRepository.findById(transactionId)
-        .orElse(null) ?: continue
+            try {
+                postingClient.get()
+                    .uri("/transactions/{id}", transactionId)
+                    .retrieve()
+                    .toBodilessEntity()
 
-    val currentOutbox = outboxRepository.findById(transactionId)
-        .orElse(null) ?: continue
+                markCompleted(transactionId)
 
-    if (currentOutbox.status != OutboxStatus.PROCESSING) {
-        continue
+                logger.info(
+                    "Recovered transaction {}: it exists remotely",
+                    transactionId
+                )
+            } catch (exception: HttpClientErrorException.NotFound) {
+                val transaction = transactionRepository
+                    .findById(transactionId)
+                    .orElse(null) ?: continue
+
+                val currentOutbox = outboxRepository
+                    .findById(transactionId)
+                    .orElse(null) ?: continue
+
+                // Do not overwrite a state changed by another worker.
+                if (currentOutbox.status != OutboxStatus.PROCESSING) {
+                    continue
+                }
+
+                transaction.status = TransactionStatus.FAILED
+                transaction.lastError =
+                    "Remote transaction not found during recovery; manual review required"
+                transactionRepository.save(transaction)
+
+                currentOutbox.status = OutboxStatus.FAILED
+                currentOutbox.lockedUntil = null
+                currentOutbox.lastError = transaction.lastError
+                outboxRepository.save(currentOutbox)
+
+                logger.error(
+                    "Transaction {} marked FAILED because remote absence does not prove that a retry is safe",
+                    transactionId
+                )
+            } catch (exception: Exception) {
+                logger.error(
+                    "Could not verify remote status for transaction {}. Leaving it unchanged",
+                    transactionId,
+                    exception
+                )
+            }
+        }
     }
-
-    if (currentOutbox.attemptCount < 5) {
-        transaction.status = TransactionStatus.PENDING
-        transaction.lastError =
-            "Expired processing lock; remote transaction not found"
-        transactionRepository.save(transaction)
-
-        currentOutbox.status = OutboxStatus.PENDING
-        currentOutbox.lockedUntil = null
-        currentOutbox.nextAttemptAt = Instant.now()
-        currentOutbox.lastError = transaction.lastError
-        outboxRepository.save(currentOutbox)
-
-        logger.warn(
-            "Transaction {} reset to PENDING for retry; attempt count {} of 5",
-            transactionId,
-            currentOutbox.attemptCount
-        )
-    } else {
-        transaction.status = TransactionStatus.FAILED
-        transaction.lastError =
-            "Maximum attempts reached after expired processing lock"
-        transactionRepository.save(transaction)
-
-        currentOutbox.status = OutboxStatus.FAILED
-        currentOutbox.lockedUntil = null
-        currentOutbox.lastError = transaction.lastError
-        outboxRepository.save(currentOutbox)
-
-        logger.error(
-            "Transaction {} marked FAILED after reaching maximum attempts",
-            transactionId
-        )
-    }
-    } catch (exception: Exception) {
-        logger.error(
-            "Could not verify remote status for transaction {}. Leaving it unchanged",
-            transactionId,
-            exception
-        )
-    }
-}
-
-}
 
 }

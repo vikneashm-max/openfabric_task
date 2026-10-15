@@ -29,7 +29,7 @@ class OutboxDispatcher(
 
         for (item in pending) {
             // Don't dispatch a transaction before its retry time.
-            if (item.nextAttemptAt != null && item.nextAttemptAt!!.isAfter(now)) {
+            if (item.nextAttemptAt?.isAfter(now) == true) {
                 continue
             }
 
