@@ -11,21 +11,19 @@ import org.springframework.http.MediaType
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import org.springframework.web.client.HttpClientErrorException
-import org.springframework.web.client.RestClient
 import java.time.Instant
+
 
 @Component
 class TransactionWorker(
     private val redisTemplate: StringRedisTemplate,
     private val transactionRepository: TransactionRepository,
-    private val outboxRepository: OutboxRepository
+    private val outboxRepository: OutboxRepository,
+    private val postingGateway: PostingGateway
 ) {
 
     private val logger = LoggerFactory.getLogger(TransactionWorker::class.java)
 
-    private val postingClient = RestClient.builder()
-        .baseUrl("http://localhost:8080")
-        .build()
 
     @Scheduled(fixedDelay = 200)
     fun processNextTransaction() {
@@ -76,12 +74,7 @@ class TransactionWorker(
                 "timestamp" to transaction.transactionTimestamp.toString()
             )
 
-            postingClient.post()
-                .uri("/transactions")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(payload)
-                .retrieve()
-                .toBodilessEntity()
+            postingGateway.postTransaction(payload)
 
             markCompleted(transactionId)
         } catch (exception: Exception) {
@@ -122,10 +115,7 @@ class TransactionWorker(
     ) {
         try {
             // A successful GET means the mock service has this transaction.
-            postingClient.get()
-                .uri("/transactions/{id}", transactionId)
-                .retrieve()
-                .toBodilessEntity()
+            postingGateway.verifyTransactionExists(transactionId)   
 
             markCompleted(transactionId)
         } catch (notFound: HttpClientErrorException.NotFound) {
@@ -161,7 +151,8 @@ class TransactionWorker(
             transactionRepository.save(transaction)
             outboxRepository.save(outbox)
         } catch (checkException: Exception) {
-            // The remote outcome is uncertain. Do not blindly repeat the POST.
+            // The remote outcome is uncertain.
+            // Keep PROCESSING so the scheduled recovery can check again.
             val transaction = transactionRepository.findById(transactionId)
                 .orElse(null)
 
@@ -172,19 +163,22 @@ class TransactionWorker(
                 "Remote outcome is uncertain: ${checkException.message}"
 
             if (transaction != null) {
-                transaction.status = TransactionStatus.FAILED
+                transaction.status = TransactionStatus.PROCESSING
                 transaction.lastError = message
                 transactionRepository.save(transaction)
             }
 
             if (outbox != null) {
-                outbox.status = OutboxStatus.FAILED
+                outbox.status = OutboxStatus.PROCESSING
                 outbox.lastError = message
+
+                // Allow the recovery scheduler to inspect it again.
+                outbox.lockedUntil = Instant.now().minusSeconds(1)
                 outboxRepository.save(outbox)
             }
 
             logger.error(
-                "Unable to verify remote transaction {}. Manual reconciliation may be required.",
+                "Unable to verify remote transaction {}. Scheduled recovery will check again.",
                 transactionId,
                 checkException
             )
@@ -219,10 +213,7 @@ fun recoverExpiredTransactions() {
             )
 
             try {
-                postingClient.get()
-                    .uri("/transactions/{id}", transactionId)
-                    .retrieve()
-                    .toBodilessEntity()
+                postingGateway.verifyTransactionExists(transactionId)
 
                 markCompleted(transactionId)
 
@@ -251,6 +242,7 @@ fun recoverExpiredTransactions() {
 
                 currentOutbox.status = OutboxStatus.FAILED
                 currentOutbox.lockedUntil = null
+                currentOutbox.workerId = null
                 currentOutbox.lastError = transaction.lastError
                 outboxRepository.save(currentOutbox)
 
