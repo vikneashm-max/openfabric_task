@@ -2,8 +2,11 @@
 package com.openfabric.task.service
 
 import com.openfabric.task.dto.CreateTransactionRequest
+import com.openfabric.task.entity.OutboxEntity
+import com.openfabric.task.entity.OutboxStatus
 import com.openfabric.task.entity.TransactionEntity
 import com.openfabric.task.entity.TransactionStatus
+import com.openfabric.task.repository.OutboxRepository
 import com.openfabric.task.repository.TransactionRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -11,7 +14,8 @@ import java.time.Instant
 
 @Service
 class TransactionService(
-    private val transactionRepository: TransactionRepository
+    private val transactionRepository: TransactionRepository,
+    private val outboxRepository: OutboxRepository
 ) {
 
     @Transactional
@@ -33,6 +37,17 @@ class TransactionService(
                 "Transaction ID already exists with different data"
             }
 
+            // Ensure an existing transaction also has work recorded.
+            if (!outboxRepository.existsById(request.id)) {
+                outboxRepository.save(
+                    OutboxEntity(
+                        transactionId = request.id,
+                        status = OutboxStatus.PENDING,
+                        createdAt = Instant.now()
+                    )
+                )
+            }
+
             return transaction
         }
 
@@ -46,7 +61,18 @@ class TransactionService(
             submittedAt = Instant.now()
         )
 
-        return transactionRepository.save(transaction)
+        val savedTransaction = transactionRepository.save(transaction)
+
+        // Record the work in SQLite in the same database transaction.
+        outboxRepository.save(
+            OutboxEntity(
+                transactionId = request.id,
+                status = OutboxStatus.PENDING,
+                createdAt = Instant.now()
+            )
+        )
+
+        return savedTransaction
     }
 
     fun getTransaction(id: String): TransactionEntity? {
