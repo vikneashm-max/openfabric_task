@@ -1,16 +1,19 @@
 import React from 'react';
-import type { RateLimit } from '../api/types';
+import type { RateLimit, Transaction } from '../api/types';
 import { RateLimitPanel } from '../components/rateLimit/RateLimitPanel';
+import { RateLimitVisualDiagram } from '../components/charts/RateLimitVisualDiagram';
 import { Info, Code } from 'lucide-react';
 
 interface RateLimitPageProps {
   rateLimit: RateLimit | null;
+  transactions?: Transaction[];
   isLoading: boolean;
   onRefresh: () => void;
 }
 
 export const RateLimitPage: React.FC<RateLimitPageProps> = ({
   rateLimit,
+  transactions = [],
   isLoading,
   onRefresh,
 }) => {
@@ -26,6 +29,13 @@ export const RateLimitPage: React.FC<RateLimitPageProps> = ({
 
       {/* Main Panel */}
       <RateLimitPanel rateLimit={rateLimit} isLoading={isLoading} onRefresh={onRefresh} />
+
+      {/* Visual Diagram of Ingress Load vs Rate Limit */}
+      <RateLimitVisualDiagram
+        rateLimit={rateLimit}
+        transactions={transactions}
+        isLoading={isLoading}
+      />
 
       {/* Technical Architecture & 429 Format Explanation */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

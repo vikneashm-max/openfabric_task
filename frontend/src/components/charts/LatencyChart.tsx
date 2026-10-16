@@ -1,12 +1,25 @@
-import React from 'react';
-import type { TimeSeriesPoint } from '../../api/types';
+import React, { useState } from 'react';
+import type { TimeSeriesPoint, Transaction } from '../../api/types';
+import { formatTimeTaken } from '../../utils/transactionFormat';
+import { TransactionHoverTooltip, type TransactionHoverDetails } from '../common/TransactionHoverTooltip';
+
+export interface DetailedTimeSeriesPoint extends TimeSeriesPoint {
+  transactions?: Transaction[];
+}
 
 interface LatencyChartProps {
-  data: TimeSeriesPoint[];
+  data: DetailedTimeSeriesPoint[];
+  transactions?: Transaction[];
   isLoading?: boolean;
 }
 
-export const LatencyChart: React.FC<LatencyChartProps> = ({ data, isLoading = false }) => {
+export const LatencyChart: React.FC<LatencyChartProps> = ({
+  data,
+  transactions = [],
+  isLoading = false,
+}) => {
+  const [hoveredDetails, setHoveredDetails] = useState<TransactionHoverDetails | null>(null);
+
   if (isLoading) {
     return (
       <div className="h-64 flex items-center justify-center bg-slate-50/50 rounded-xl border border-slate-100 animate-pulse">
@@ -43,7 +56,7 @@ export const LatencyChart: React.FC<LatencyChartProps> = ({ data, isLoading = fa
   const points = data.map((d, idx) => {
     const x = paddingX + idx * stepX;
     const y = paddingY + innerHeight - ((d.avgLatencyMs || 0) / maxVal) * innerHeight;
-    return { x, y, latency: d.avgLatencyMs, time: d.timestamp };
+    return { x, y, latency: d.avgLatencyMs, time: d.timestamp, point: d };
   });
 
   const polylineStr = points.map((p) => `${p.x},${p.y}`).join(' ');
@@ -51,14 +64,47 @@ export const LatencyChart: React.FC<LatencyChartProps> = ({ data, isLoading = fa
     ? `M ${points[0].x},${paddingY + innerHeight} L ${polylineStr} L ${points[points.length - 1].x},${paddingY + innerHeight} Z`
     : '';
 
+  const handlePointHover = (point: DetailedTimeSeriesPoint) => {
+    const pool = point.transactions && point.transactions.length > 0 ? point.transactions : transactions;
+    const match = pool.find((t) => t.status === 'COMPLETED' && t.completedAt) || pool[0];
+
+    if (match) {
+      setHoveredDetails({
+        id: match.id,
+        amt: match.amount,
+        currency: match.currency,
+        status: match.status,
+        timeTaken: formatTimeTaken(match),
+        title: `${point.timestamp} Latency Marker`,
+        note: `Average interval latency: ${(point.avgLatencyMs / 1000).toFixed(3)}s`,
+      });
+    } else {
+      setHoveredDetails({
+        id: `txn-${point.timestamp.replace(':', '')}`,
+        amt: '0.00',
+        currency: 'INR',
+        status: 'COMPLETED',
+        timeTaken: `${(point.avgLatencyMs / 1000).toFixed(3)}s`,
+        title: `${point.timestamp} Latency Marker`,
+      });
+    }
+  };
+
   return (
-    <div className="w-full">
+    <div className="w-full relative">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-slate-700">Average Processing Latency (s)</span>
         </div>
         <span className="text-[11px] text-slate-400 font-mono">Max: {(maxVal / 1000).toFixed(3)}s</span>
       </div>
+
+      {/* Floating Hover Details for Latency Points */}
+      {hoveredDetails && (
+        <div className="absolute top-10 right-4 z-40 max-w-xs shadow-2xl">
+          <TransactionHoverTooltip details={hoveredDetails} />
+        </div>
+      )}
 
       <div className="relative w-full overflow-x-auto">
         <svg
@@ -116,12 +162,17 @@ export const LatencyChart: React.FC<LatencyChartProps> = ({ data, isLoading = fa
 
           {/* Point markers & labels */}
           {points.map((p, idx) => (
-            <g key={idx} className="group">
+            <g
+              key={idx}
+              className="group cursor-pointer"
+              onMouseEnter={() => handlePointHover(p.point)}
+              onMouseLeave={() => setHoveredDetails(null)}
+            >
               <circle
                 cx={p.x}
                 cy={p.y}
-                r="4"
-                className="fill-white stroke-blue-600 stroke-2 group-hover:r-5 transition-all"
+                r="4.5"
+                className="fill-white stroke-blue-600 stroke-2 group-hover:r-6 group-hover:stroke-blue-700 transition-all"
               />
               <text
                 x={p.x}

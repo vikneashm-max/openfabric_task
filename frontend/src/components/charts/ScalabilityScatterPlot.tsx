@@ -1,4 +1,6 @@
 import React, { useState, useMemo } from 'react';
+import { TransactionHoverTooltip } from '../common/TransactionHoverTooltip';
+import { formatTimeTaken } from '../../utils/transactionFormat';
 
 export interface BackendScatterPoint {
   index: number;
@@ -221,10 +223,10 @@ export const ScalabilityScatterPlot: React.FC<ScalabilityScatterPlotProps> = ({
           })}
         </svg>
 
-        {/* Floating Tooltip */}
+        {/* Floating Tooltip displaying (id, amt, status, time taken) */}
         {hoveredPoint && (
           <div
-            className="absolute z-30 pointer-events-none bg-slate-900/95 text-white text-[11px] p-2.5 rounded-xl shadow-xl font-mono border border-slate-700 backdrop-blur-xs"
+            className="absolute z-30 pointer-events-none max-w-xs shadow-2xl"
             style={{
               left: `${Math.min(
                 Math.max((hoveredPoint.index / maxIndex) * 85, 10),
@@ -233,37 +235,17 @@ export const ScalabilityScatterPlot: React.FC<ScalabilityScatterPlotProps> = ({
               top: '10px',
             }}
           >
-            <div className="flex items-center gap-2 mb-1">
-              <span className="font-bold text-slate-200">Txn #{hoveredPoint.index}</span>
-              <span
-                className="px-1.5 py-0.2 rounded text-[10px] font-bold"
-                style={{
-                  backgroundColor: getStatusColor(hoveredPoint.status) + '33',
-                  color: getStatusColor(hoveredPoint.status),
-                }}
-              >
-                {hoveredPoint.status}
-              </span>
-            </div>
-            <div className="text-emerald-400 font-bold">
-              Processing Latency: {(hoveredPoint.latencyMs / 1000).toFixed(3)} s
-            </div>
-            <div className="text-slate-300 text-[10px]">
-              Amount: {hoveredPoint.amount} {hoveredPoint.currency}
-            </div>
-            <div className="text-slate-400 text-[10px] mt-0.5">
-              ID: {hoveredPoint.id.substring(0, 16)}...
-            </div>
-            {hoveredPoint.attemptCount > 1 && (
-              <div className="text-amber-400 text-[10px]">
-                Attempts: {hoveredPoint.attemptCount}
-              </div>
-            )}
-            {hoveredPoint.lastError && (
-              <div className="text-rose-400 text-[10px] truncate max-w-xs">
-                Error: {hoveredPoint.lastError}
-              </div>
-            )}
+            <TransactionHoverTooltip
+              details={{
+                id: hoveredPoint.id,
+                amt: hoveredPoint.amount,
+                currency: hoveredPoint.currency,
+                status: hoveredPoint.status,
+                timeTaken: formatTimeTaken(hoveredPoint),
+                title: `Scatter Point #${hoveredPoint.index}`,
+                note: hoveredPoint.lastError ? `Error: ${hoveredPoint.lastError}` : undefined,
+              }}
+            />
           </div>
         )}
       </div>

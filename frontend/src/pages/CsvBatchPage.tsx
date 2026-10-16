@@ -1,12 +1,14 @@
 import React from 'react';
+import type { Transaction } from '../api/types';
 import { CsvBatchPanel } from '../components/csvUpload/CsvBatchPanel';
 import { FileSpreadsheet, Layers, ShieldCheck, Gauge } from 'lucide-react';
 
 interface CsvBatchPageProps {
   onDataProcessed?: () => void;
+  transactions?: Transaction[];
 }
 
-export const CsvBatchPage: React.FC<CsvBatchPageProps> = ({ onDataProcessed }) => {
+export const CsvBatchPage: React.FC<CsvBatchPageProps> = ({ onDataProcessed, transactions = [] }) => {
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -27,7 +29,7 @@ export const CsvBatchPage: React.FC<CsvBatchPageProps> = ({ onDataProcessed }) =
       </div>
 
       {/* Main CSV Benchmark Panel */}
-      <CsvBatchPanel onDataProcessed={onDataProcessed} />
+      <CsvBatchPanel onDataProcessed={onDataProcessed} transactions={transactions} />
 
       {/* Benchmarking & Architectural Highlights */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">

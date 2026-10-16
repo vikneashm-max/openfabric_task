@@ -27,6 +27,7 @@ import { ScalabilityScatterPlot, type BackendScatterPoint } from '../charts/Scal
 
 interface CsvBatchPanelProps {
   onDataProcessed?: () => void;
+  transactions?: Transaction[];
 }
 
 interface ParsedTransactionRow {
@@ -53,7 +54,7 @@ interface PersistedBatchSession {
   cachedTransactions?: Transaction[];
 }
 
-export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed }) => {
+export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed, transactions = [] }) => {
   // Parsed records state
   const [parsedRows, setParsedRows] = useState<ParsedTransactionRow[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -104,6 +105,10 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const submittedIdsRef = useRef<Set<string>>(new Set());
   const batchStartTimeRef = useRef<number>(0);
+  const isPollingRef = useRef<boolean>(false);
+  const pollSeqRef = useRef<number>(0);
+  const batchTxMapRef = useRef<Map<string, Transaction>>(new Map());
+  const [maxProcessedCount, setMaxProcessedCount] = useState<number>(0);
 
   const saveSession = (updates: Partial<PersistedBatchSession>) => {
     try {
@@ -263,10 +268,13 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
         return;
       }
 
+      handleReset(false);
       setParsedRows(rows);
       setFileName(sourceName);
       setShowPreview(true);
-      handleReset(false);
+      batchTxMapRef.current.clear();
+      setMaxProcessedCount(0);
+      submittedIdsRef.current = new Set(rows.map((r) => r.id));
       saveSession({
         fileName: sourceName,
         parsedRows: rows,
@@ -325,6 +333,7 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
     const pending = batchTxns.filter((t) => t.status === 'PENDING').length;
 
     setBackendStatuses({ completed, failed, processing, pending });
+    setMaxProcessedCount((prev) => Math.max(prev, completed + failed));
 
     // Compute processing latencies directly from backend timestamps
     const latencies: number[] = [];
@@ -402,6 +411,44 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
           });
           return updated;
         });
+      } else {
+        // Generate visual throughput rate stream from past transactions if rateStream is empty
+        setRateStream((prev) => {
+          if (prev.length > 0) return prev;
+          const sortedTx = [...batchTxns].sort(
+            (a, b) => new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime()
+          );
+          if (sortedTx.length === 0) return [];
+
+          const t0 = new Date(sortedTx[0].submittedAt).getTime();
+          const tEnd = new Date(sortedTx[sortedTx.length - 1].submittedAt).getTime();
+          const totalDurationSec = Math.max(1, (tEnd - t0) / 1000);
+          const numPoints = Math.min(10, Math.max(4, sortedTx.length));
+          const stepSec = Math.max(1, totalDurationSec / numPoints);
+
+          const stream: RateTimePoint[] = [];
+          let maxRps = 10;
+
+          for (let i = 1; i <= numPoints; i++) {
+            const pointTimeSec = Math.round(i * stepSec * 10) / 10;
+            const upToTime = t0 + i * stepSec * 1000;
+            const instantCount = sortedTx.filter((t) => {
+              const time = new Date(t.submittedAt).getTime();
+              return time > (upToTime - stepSec * 1000) && time <= upToTime;
+            }).length;
+            const rps = Math.round((instantCount / stepSec) * 10) / 10;
+            const rateVal = rps > 0 ? rps : Math.max(1, Math.round((completed / totalDurationSec) * 10) / 10);
+            maxRps = Math.max(maxRps, rateVal);
+            stream.push({
+              timeSec: pointTimeSec,
+              rps: rateVal,
+              instantLatencyMs: Math.round(total / sorted.length),
+            });
+          }
+
+          setPeakRps((prevPeak) => Math.max(prevPeak, maxRps));
+          return stream;
+        });
       }
     } else if (persist) {
       saveSession({
@@ -429,17 +476,40 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
   // Poll backend for real processed transaction records
   const pollBackendProcessedData = async () => {
     if (submittedIdsRef.current.size === 0) return;
+    if (isPollingRef.current) return;
+    isPollingRef.current = true;
+    const currentSeq = ++pollSeqRef.current;
 
     try {
       const allTxns = await apiClient.getTransactions({ limit: 1000 });
-      // Filter by the submitted batch IDs
-      const batchTxns = allTxns.filter((tx) => submittedIdsRef.current.has(tx.id));
+      if (currentSeq < pollSeqRef.current) {
+        // Newer poll response already completed, ignore older response
+        return;
+      }
 
+      // Merge into cumulative Map
+      allTxns.forEach((tx) => {
+        if (submittedIdsRef.current.has(tx.id)) {
+          const prev = batchTxMapRef.current.get(tx.id);
+          // Once marked completed or failed, terminal states never revert to pending/processing
+          if (prev && (prev.status === 'COMPLETED' || prev.status === 'FAILED')) {
+            if (tx.status === 'COMPLETED' || tx.status === 'FAILED') {
+              batchTxMapRef.current.set(tx.id, tx);
+            }
+          } else {
+            batchTxMapRef.current.set(tx.id, tx);
+          }
+        }
+      });
+
+      const batchTxns = Array.from(batchTxMapRef.current.values());
       if (batchTxns.length === 0) return;
 
       processBatchData(batchTxns, true);
     } catch {
       // Ignore transient polling failure
+    } finally {
+      isPollingRef.current = false;
     }
   };
 
@@ -451,6 +521,9 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
     abortControllerRef.current = new AbortController();
     batchStartTimeRef.current = performance.now();
     submittedIdsRef.current = new Set(parsedRows.map((r) => r.id));
+    batchTxMapRef.current.clear();
+    setMaxProcessedCount(0);
+    pollSeqRef.current = 0;
 
     setStatus('INGESTING');
     setSentCount(0);
@@ -573,6 +646,8 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
     setRateStream([]);
     setScatterPoints([]);
     setPeakRps(0);
+    setMaxProcessedCount(0);
+    batchTxMapRef.current.clear();
 
     if (clearStorage) {
       setParsedRows([]);
@@ -585,6 +660,8 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
 
   // Restore persisted CSV batch session on mount so diagrams & history survive browser refresh/reopen
   useEffect(() => {
+    let hasLoadedTransactions = false;
+    let hasParsedRows = false;
     try {
       const raw = localStorage.getItem(CSV_STORAGE_KEY);
       if (raw) {
@@ -592,6 +669,7 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
         if (session.fileName) setFileName(session.fileName);
         if (session.parsedRows && session.parsedRows.length > 0) {
           setParsedRows(session.parsedRows);
+          hasParsedRows = true;
           setShowPreview(true);
         }
         if (session.status) setStatus(session.status);
@@ -611,6 +689,7 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
         // Immediately compute diagrams and visual state from cached transactions
         if (session.cachedTransactions && session.cachedTransactions.length > 0) {
           processBatchData(session.cachedTransactions, false);
+          hasLoadedTransactions = true;
         }
 
         // If batch was in-flight or submitted, query backend immediately to refresh state
@@ -627,6 +706,24 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
       console.warn('Failed to restore CSV batch session:', e);
     }
 
+    // Only load historical ledger transactions if NO CSV file is loaded or persisted,
+    // so past ledger records never overwrite or contaminate an uploaded CSV batch!
+    if (!hasLoadedTransactions && !hasParsedRows) {
+      void (async () => {
+        try {
+          const historical = await apiClient.getTransactions({ limit: 1000 });
+          if (historical && historical.length > 0) {
+            processBatchData(historical, false);
+            setStatus('COMPLETED');
+            setFileName('Past Ingress Batch (Database Ledger)');
+            setSentCount(historical.length);
+          }
+        } catch (err) {
+          console.warn('Could not fetch historical transactions for diagrams:', err);
+        }
+      })();
+    }
+
     return () => {
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
@@ -634,10 +731,45 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
     };
   }, []);
 
-  const totalProcessed = backendStatuses.completed + backendStatuses.failed;
+  // When new transactions arrive or are submitted, update the diagrams dynamically
+  useEffect(() => {
+    if (
+      transactions.length > 0 &&
+      parsedRows.length === 0 &&
+      (fileName === null || fileName === 'Past Ingress Batch (Database Ledger)') &&
+      status !== 'INGESTING' &&
+      status !== 'PROCESSING'
+    ) {
+      processBatchData(transactions, false);
+      setStatus('COMPLETED');
+      setFileName('Past Ingress Batch (Database Ledger)');
+      setSentCount(transactions.length);
+    }
+  }, [transactions, parsedRows.length, fileName, status]);
+
+  const rawProcessed = backendStatuses.completed + backendStatuses.failed;
+  const totalProcessed = parsedRows.length > 0
+    ? Math.min(parsedRows.length, Math.max(rawProcessed, maxProcessedCount))
+    : Math.max(rawProcessed, maxProcessedCount);
   const progressPercent = parsedRows.length > 0
     ? Math.min(100, Math.round((totalProcessed / parsedRows.length) * 100))
     : 0;
+
+  const displaySentCount = parsedRows.length > 0
+    ? Math.min(parsedRows.length, sentCount)
+    : sentCount;
+  const displayCompleted = parsedRows.length > 0
+    ? Math.min(parsedRows.length, backendStatuses.completed)
+    : backendStatuses.completed;
+  const displayFailed = parsedRows.length > 0
+    ? Math.min(parsedRows.length, backendStatuses.failed)
+    : backendStatuses.failed;
+  const displayPending = parsedRows.length > 0
+    ? Math.min(Math.max(0, parsedRows.length - displayCompleted - displayFailed), backendStatuses.pending)
+    : backendStatuses.pending;
+  const displayProcessing = parsedRows.length > 0
+    ? Math.min(Math.max(0, parsedRows.length - displayCompleted - displayFailed - displayPending), backendStatuses.processing)
+    : backendStatuses.processing;
 
   const slaCompliancePct = backendStatuses.completed > 0
     ? (((latencyBuckets.under20ms + latencyBuckets.from20to50ms + latencyBuckets.from50to100ms) / backendStatuses.completed) * 100).toFixed(1)
@@ -806,7 +938,7 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
 
           <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden my-3">
             <div
-              className={`h-full transition-all duration-200 rounded-full ${
+              className={`h-full transition-[width] duration-300 ease-out rounded-full ${
                 status === 'COMPLETED'
                   ? 'bg-emerald-500'
                   : status === 'STOPPED'
@@ -818,13 +950,13 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
           </div>
 
           <div className="flex flex-wrap justify-between items-center text-xs text-slate-500 font-mono gap-2">
-            <span>Submitted: <strong className="text-slate-800">{sentCount}</strong></span>
+            <span>Submitted: <strong className="text-slate-800">{displaySentCount}</strong></span>
             {submissionConflicts > 0 && <span>Conflicts: <strong className="text-orange-600 font-bold">{submissionConflicts}</strong></span>}
             {submissionErrors > 0 && <span>Errors: <strong className="text-rose-600 font-bold">{submissionErrors}</strong></span>}
-            <span>Confirmed Completed: <strong className="text-emerald-600 font-bold">{backendStatuses.completed}</strong></span>
-            <span>Workers Processing: <strong className="text-blue-600 font-bold">{backendStatuses.processing}</strong></span>
-            <span>Queue Pending: <strong className="text-amber-600 font-bold">{backendStatuses.pending}</strong></span>
-            <span>Failed: <strong className="text-rose-600 font-bold">{backendStatuses.failed}</strong></span>
+            <span>Confirmed Completed: <strong className="text-emerald-600 font-bold">{displayCompleted}</strong></span>
+            <span>Workers Processing: <strong className="text-blue-600 font-bold">{displayProcessing}</strong></span>
+            <span>Queue Pending: <strong className="text-amber-600 font-bold">{displayPending}</strong></span>
+            <span>Failed: <strong className="text-rose-600 font-bold">{displayFailed}</strong></span>
           </div>
         </div>
       )}
@@ -836,7 +968,7 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
             Backend COMPLETED
           </span>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-emerald-600 font-mono">{backendStatuses.completed}</span>
+            <span className="text-2xl font-bold text-emerald-600 font-mono">{displayCompleted}</span>
             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
           </div>
           <span className="text-[11px] text-slate-500 mt-1 block">Confirmed by remote service</span>
@@ -848,7 +980,7 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
           </span>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-bold text-amber-600 font-mono">
-              {backendStatuses.processing + backendStatuses.pending}
+              {displayProcessing + displayPending}
             </span>
             <Clock className="w-4 h-4 text-amber-500" />
           </div>
@@ -860,7 +992,7 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
             Backend FAILED
           </span>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-rose-600 font-mono">{backendStatuses.failed}</span>
+            <span className="text-2xl font-bold text-rose-600 font-mono">{displayFailed}</span>
             <XCircle className="w-4 h-4 text-rose-500" />
           </div>
           <span className="text-[11px] text-slate-500 mt-1 block">Terminated after 5 retries</span>
@@ -916,6 +1048,7 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
           data={rateStream}
           peakRps={peakRps}
           avgRps={rateStream.length > 0 ? rateStream.reduce((a, b) => a + b.rps, 0) / rateStream.length : 0}
+          transactions={retrievedTransactions.length > 0 ? retrievedTransactions : transactions}
         />
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -923,6 +1056,7 @@ export const CsvBatchPanel: React.FC<CsvBatchPanelProps> = ({ onDataProcessed })
             statusData={backendStatuses}
             latencyBuckets={latencyBuckets}
             totalCount={retrievedTransactions.length}
+            transactions={retrievedTransactions.length > 0 ? retrievedTransactions : transactions}
           />
 
           <ScalabilityScatterPlot

@@ -1,4 +1,7 @@
 import React, { useState } from 'react';
+import type { Transaction } from '../../api/types';
+import { TransactionHoverTooltip, type TransactionHoverDetails } from '../common/TransactionHoverTooltip';
+import { formatTimeTaken } from '../../utils/transactionFormat';
 
 export interface BackendStatusDistribution {
   completed: number;
@@ -19,14 +22,17 @@ interface ScalabilityStatusBarChartProps {
   statusData: BackendStatusDistribution;
   latencyBuckets: LatencyBuckets;
   totalCount: number;
+  transactions?: Transaction[];
 }
 
 export const ScalabilityStatusBarChart: React.FC<ScalabilityStatusBarChartProps> = ({
   statusData,
   latencyBuckets,
   totalCount,
+  transactions = [],
 }) => {
   const [activeView, setActiveView] = useState<'status' | 'latency'>('status');
+  const [hoveredDetails, setHoveredDetails] = useState<TransactionHoverDetails | null>(null);
 
   const statusBars = [
     {
@@ -112,8 +118,48 @@ export const ScalabilityStatusBarChart: React.FC<ScalabilityStatusBarChartProps>
   const totalCompleted = statusData.completed;
   const slaPct = totalCompleted > 0 ? ((slaCount / totalCompleted) * 100).toFixed(1) : '100.0';
 
+  const handleBarHover = (bar: typeof currentBars[0]) => {
+    let match: Transaction | undefined;
+    if (activeView === 'status') {
+      match = (transactions || []).find((tx) => tx.status === bar.label);
+    } else {
+      match = (transactions || []).find((tx) => {
+        if (!tx.completedAt || !tx.submittedAt) return false;
+        const diff = new Date(tx.completedAt).getTime() - new Date(tx.submittedAt).getTime();
+        if (bar.label === '< 0.02 s') return diff < 20;
+        if (bar.label === '0.02 - 0.05 s') return diff >= 20 && diff < 50;
+        if (bar.label === '0.05 - 0.10 s') return diff >= 50 && diff < 100;
+        if (bar.label === '0.10 - 0.20 s') return diff >= 100 && diff < 200;
+        return diff >= 200;
+      });
+    }
+
+    if (!match && transactions && transactions.length > 0) {
+      match = transactions[0];
+    }
+
+    if (match) {
+      setHoveredDetails({
+        id: match.id,
+        amt: match.amount,
+        currency: match.currency,
+        status: match.status,
+        timeTaken: formatTimeTaken(match),
+        title: `${bar.label} (${bar.count} records)`,
+        note: bar.desc,
+      });
+    }
+  };
+
   return (
-    <div className="w-full bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+    <div className="relative w-full bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+      {/* Floating Hover Details for any bar */}
+      {hoveredDetails && (
+        <div className="absolute top-14 right-4 z-40 max-w-xs shadow-2xl">
+          <TransactionHoverTooltip details={hoveredDetails} />
+        </div>
+      )}
+
       {/* Header with View Toggle */}
       <div>
         <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
@@ -190,7 +236,12 @@ export const ScalabilityStatusBarChart: React.FC<ScalabilityStatusBarChartProps>
               const y = paddingTop + innerHeight - barHeight;
 
               return (
-                <g key={idx} className="group cursor-pointer">
+                <g
+                  key={idx}
+                  className="group cursor-pointer"
+                  onMouseEnter={() => handleBarHover(bar)}
+                  onMouseLeave={() => setHoveredDetails(null)}
+                >
                   {/* The bar */}
                   <rect
                     x={x}

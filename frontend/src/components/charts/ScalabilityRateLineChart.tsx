@@ -1,4 +1,7 @@
 import React, { useState } from 'react';
+import type { Transaction } from '../../api/types';
+import { TransactionHoverTooltip, type TransactionHoverDetails } from '../common/TransactionHoverTooltip';
+import { formatTimeTaken } from '../../utils/transactionFormat';
 
 export interface RateTimePoint {
   timeSec: number;
@@ -11,6 +14,7 @@ interface ScalabilityRateLineChartProps {
   peakRps: number;
   avgRps: number;
   isLoading?: boolean;
+  transactions?: Transaction[];
 }
 
 export const ScalabilityRateLineChart: React.FC<ScalabilityRateLineChartProps> = ({
@@ -18,8 +22,10 @@ export const ScalabilityRateLineChart: React.FC<ScalabilityRateLineChartProps> =
   peakRps,
   avgRps,
   isLoading = false,
+  transactions = [],
 }) => {
   const [hoveredPoint, setHoveredPoint] = useState<RateTimePoint | null>(null);
+  const [hoveredDetails, setHoveredDetails] = useState<TransactionHoverDetails | null>(null);
 
   if (isLoading) {
     return (
@@ -65,6 +71,22 @@ export const ScalabilityRateLineChart: React.FC<ScalabilityRateLineChartProps> =
 
   // Calculate average line Y
   const avgLineY = paddingTop + innerHeight - (avgRps / maxRps) * innerHeight;
+
+  const handlePointHover = (p: RateTimePoint) => {
+    setHoveredPoint(p);
+    const match = transactions && transactions.length > 0 ? transactions[0] : null;
+    if (match) {
+      setHoveredDetails({
+        id: match.id,
+        amt: match.amount,
+        currency: match.currency,
+        status: match.status,
+        timeTaken: formatTimeTaken(match),
+        title: `Throughput Point (+${p.timeSec.toFixed(1)}s)`,
+        note: `Rate: ${p.rps.toFixed(1)} req/sec`,
+      });
+    }
+  };
 
   return (
     <div className="w-full bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
@@ -189,8 +211,11 @@ export const ScalabilityRateLineChart: React.FC<ScalabilityRateLineChartProps> =
                   cy={p.y}
                   r={isHovered ? 6 : 3.5}
                   className="fill-white stroke-indigo-600 stroke-2 cursor-pointer transition-all duration-150"
-                  onMouseEnter={() => setHoveredPoint(p)}
-                  onMouseLeave={() => setHoveredPoint(null)}
+                  onMouseEnter={() => handlePointHover(p)}
+                  onMouseLeave={() => {
+                    setHoveredPoint(null);
+                    setHoveredDetails(null);
+                  }}
                 />
               </g>
             );
@@ -214,17 +239,19 @@ export const ScalabilityRateLineChart: React.FC<ScalabilityRateLineChartProps> =
           })}
         </svg>
 
-        {/* Hover Tooltip Overlay */}
-        {hoveredPoint && (
+        {/* Hover Tooltip Overlay displaying (id, amt, status, time taken) */}
+        {hoveredDetails && (
           <div
-            className="absolute z-20 pointer-events-none bg-slate-900 text-white text-[11px] px-2.5 py-1.5 rounded-lg shadow-xl font-mono border border-slate-700"
+            className="absolute z-30 pointer-events-none max-w-xs shadow-2xl"
             style={{
-              left: `${(hoveredPoint.timeSec / maxTime) * 80 + 10}%`,
-              top: '15px',
+              left: `${Math.min(
+                Math.max(((hoveredPoint?.timeSec || 0) / maxTime) * 75 + 5, 5),
+                70
+              )}%`,
+              top: '10px',
             }}
           >
-            <div className="font-bold text-indigo-300">{hoveredPoint.rps.toFixed(1)} req/sec</div>
-            <div className="text-slate-400 text-[10px]">Elapsed: {hoveredPoint.timeSec.toFixed(2)}s</div>
+            <TransactionHoverTooltip details={hoveredDetails} />
           </div>
         )}
       </div>

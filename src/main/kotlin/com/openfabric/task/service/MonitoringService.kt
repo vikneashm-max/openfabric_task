@@ -49,12 +49,34 @@ class MonitoringService(
 
         // Recent transactions for latency and throughput calculation
         val oneHourAgo = Instant.now().minus(Duration.ofHours(1))
-        val recentTransactions = transactionRepository.findBySubmittedAtAfterOrderBySubmittedAtDesc(oneHourAgo)
+        var recentTransactions = transactionRepository.findBySubmittedAtAfterOrderBySubmittedAtDesc(oneHourAgo)
+
+        // If no transactions occurred in the last hour, fallback to past transactions from database
+        if (recentTransactions.isEmpty() && total > 0) {
+            recentTransactions = transactionRepository.findAllByOrderBySubmittedAtDesc(PageRequest.of(0, 500))
+        }
 
         val oneMinuteAgo = Instant.now().minus(Duration.ofMinutes(1))
-        val throughputPerMinute = recentTransactions.count {
+        val liveThroughput = recentTransactions.count {
             it.status == TransactionStatus.COMPLETED && it.completedAt != null && it.completedAt!!.isAfter(oneMinuteAgo)
         }.toDouble()
+
+        val throughputPerMinute = if (liveThroughput > 0.0) {
+            liveThroughput
+        } else if (recentTransactions.isNotEmpty()) {
+            val completedInSample = recentTransactions.filter { it.status == TransactionStatus.COMPLETED }
+            if (completedInSample.size >= 2) {
+                val minSub = completedInSample.minOf { it.submittedAt }
+                val maxComp = completedInSample.maxOf { it.completedAt ?: it.submittedAt }
+                val spanSeconds = Duration.between(minSub, maxComp).seconds.coerceAtLeast(1L)
+                val rate = (completedInSample.size.toDouble() / spanSeconds) * 60.0
+                (rate * 10).roundToInt() / 10.0
+            } else {
+                completedInSample.size.toDouble()
+            }
+        } else {
+            0.0
+        }
 
         val completedWithLatency = recentTransactions.filter {
             it.status == TransactionStatus.COMPLETED && it.completedAt != null
@@ -97,37 +119,81 @@ class MonitoringService(
             alerts.add("Circuit Breaker is OPEN: downstream posting service is failing")
         }
 
-        // Build time series buckets (six 5-minute buckets for the last 30 minutes)
+        // Build time series buckets:
+        // If there are transactions in the last 30 minutes, render live rolling 5-minute buckets.
+        // Otherwise, render historical time buckets from past transactions so diagrams are never idle on portal open!
         val now = Instant.now()
         val timeSeries = mutableListOf<TimeSeriesPointDto>()
-        for (i in 5 downTo 0) {
-            val bucketStart = now.minus(Duration.ofMinutes(((i + 1) * 5).toLong()))
-            val bucketEnd = now.minus(Duration.ofMinutes((i * 5).toLong()))
+        val thirtyMinsAgo = now.minus(Duration.ofMinutes(30))
+        val hasRecent30Mins = recentTransactions.any { it.submittedAt.isAfter(thirtyMinsAgo) }
 
-            val inBucket = recentTransactions.filter {
-                it.submittedAt.isAfter(bucketStart) && !it.submittedAt.isAfter(bucketEnd)
-            }
+        if (hasRecent30Mins || recentTransactions.isEmpty()) {
+            for (i in 5 downTo 0) {
+                val bucketStart = now.minus(Duration.ofMinutes(((i + 1) * 5).toLong()))
+                val bucketEnd = now.minus(Duration.ofMinutes((i * 5).toLong()))
 
-            val bCompleted = inBucket.count { it.status == TransactionStatus.COMPLETED }.toLong()
-            val bFailed = inBucket.count { it.status == TransactionStatus.FAILED }.toLong()
-            val bPending = inBucket.count { it.status == TransactionStatus.PENDING || it.status == TransactionStatus.PROCESSING }.toLong()
+                val inBucket = recentTransactions.filter {
+                    it.submittedAt.isAfter(bucketStart) && !it.submittedAt.isAfter(bucketEnd)
+                }
 
-            val bLatencies = inBucket.filter { it.status == TransactionStatus.COMPLETED && it.completedAt != null }
-            val bAvgLat = if (bLatencies.isNotEmpty()) {
-                bLatencies.sumOf { Duration.between(it.submittedAt, it.completedAt).toMillis().coerceAtLeast(0) }.toDouble() / bLatencies.size
-            } else {
-                0.0
-            }
+                val bCompleted = inBucket.count { it.status == TransactionStatus.COMPLETED }.toLong()
+                val bFailed = inBucket.count { it.status == TransactionStatus.FAILED }.toLong()
+                val bPending = inBucket.count { it.status == TransactionStatus.PENDING || it.status == TransactionStatus.PROCESSING }.toLong()
 
-            timeSeries.add(
-                TimeSeriesPointDto(
-                    timestamp = timeFormatter.format(bucketEnd),
-                    completed = bCompleted,
-                    failed = bFailed,
-                    pending = bPending,
-                    avgLatencyMs = bAvgLat
+                val bLatencies = inBucket.filter { it.status == TransactionStatus.COMPLETED && it.completedAt != null }
+                val bAvgLat = if (bLatencies.isNotEmpty()) {
+                    bLatencies.sumOf { Duration.between(it.submittedAt, it.completedAt).toMillis().coerceAtLeast(0) }.toDouble() / bLatencies.size
+                } else {
+                    0.0
+                }
+
+                timeSeries.add(
+                    TimeSeriesPointDto(
+                        timestamp = timeFormatter.format(bucketEnd),
+                        completed = bCompleted,
+                        failed = bFailed,
+                        pending = bPending,
+                        avgLatencyMs = (bAvgLat * 10).roundToInt() / 10.0
+                    )
                 )
-            )
+            }
+        } else {
+            // Visual representation of past transactions partitioned across 6 time buckets
+            val sortedByTime = recentTransactions.sortedBy { it.submittedAt }
+            val firstTime = sortedByTime.first().submittedAt
+            val lastTime = sortedByTime.last().submittedAt
+            val totalSpanMillis = Duration.between(firstTime, lastTime).toMillis().coerceAtLeast(60000L)
+            val bucketSpanMillis = totalSpanMillis / 6
+
+            for (i in 0 until 6) {
+                val bucketStart = firstTime.plusMillis(i * bucketSpanMillis)
+                val bucketEnd = if (i == 5) lastTime.plusSeconds(1) else firstTime.plusMillis((i + 1) * bucketSpanMillis)
+
+                val inBucket = recentTransactions.filter {
+                    !it.submittedAt.isBefore(bucketStart) && (it.submittedAt.isBefore(bucketEnd) || (i == 5 && !it.submittedAt.isAfter(bucketEnd)))
+                }
+
+                val bCompleted = inBucket.count { it.status == TransactionStatus.COMPLETED }.toLong()
+                val bFailed = inBucket.count { it.status == TransactionStatus.FAILED }.toLong()
+                val bPending = inBucket.count { it.status == TransactionStatus.PENDING || it.status == TransactionStatus.PROCESSING }.toLong()
+
+                val bLatencies = inBucket.filter { it.status == TransactionStatus.COMPLETED && it.completedAt != null }
+                val bAvgLat = if (bLatencies.isNotEmpty()) {
+                    bLatencies.sumOf { Duration.between(it.submittedAt, it.completedAt).toMillis().coerceAtLeast(0) }.toDouble() / bLatencies.size
+                } else {
+                    0.0
+                }
+
+                timeSeries.add(
+                    TimeSeriesPointDto(
+                        timestamp = timeFormatter.format(bucketStart),
+                        completed = bCompleted,
+                        failed = bFailed,
+                        pending = bPending,
+                        avgLatencyMs = (bAvgLat * 10).roundToInt() / 10.0
+                    )
+                )
+            }
         }
 
         return MonitoringStatsDto(

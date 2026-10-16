@@ -19,9 +19,10 @@ import { SubmitTransactionModal } from './components/transactions/SubmitTransact
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 
 export function App() {
-  // Authentication State
+  // Authentication State: strictly session-scoped so closing portal tab/window automatically logs off
   const [currentUser, setCurrentUser] = useState<string | null>(() => {
-    return localStorage.getItem('openfabric_user') || sessionStorage.getItem('openfabric_user') || null;
+    localStorage.removeItem('openfabric_user');
+    return sessionStorage.getItem('openfabric_user') || null;
   });
 
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
@@ -37,7 +38,6 @@ export function App() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [isConnected, setIsConnected] = useState<boolean>(true);
-  const [refreshInterval, setRefreshInterval] = useState<number>(3); // 3 seconds default
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState<boolean>(false);
 
   // Filters
@@ -53,13 +53,15 @@ export function App() {
   };
 
   const handleLogin = (user: string) => {
+    sessionStorage.setItem('openfabric_user', user);
+    localStorage.removeItem('openfabric_user');
     setCurrentUser(user);
     showToast(`Welcome back, ${user}!`);
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('openfabric_user');
     sessionStorage.removeItem('openfabric_user');
+    localStorage.removeItem('openfabric_user');
     setCurrentUser(null);
     showToast('Signed out successfully.');
   };
@@ -70,7 +72,7 @@ export function App() {
       const [statsRes, healthRes, txsRes, cbRes, rlRes] = await Promise.allSettled([
         apiClient.getMonitoringStats(),
         apiClient.getSystemHealth(),
-        apiClient.getTransactions({ status: statusFilter, search: searchQuery, limit: 50 }),
+        apiClient.getTransactions({ status: statusFilter, search: searchQuery, limit: 500 }),
         apiClient.getCircuitBreaker(),
         apiClient.getRateLimit(),
       ]);
@@ -103,7 +105,6 @@ export function App() {
       setIsConnected(false);
     } finally {
       setIsLoading(false);
-      setIsRefreshing(false);
     }
   }, [statusFilter, searchQuery]);
 
@@ -115,25 +116,50 @@ export function App() {
     })();
   }, [currentUser, fetchData]);
 
-  // Polling Interval
+  // Fixed 10s Auto-Refresh Interval to update recent values automatically
   useEffect(() => {
-    if (!currentUser || refreshInterval <= 0) return;
+    if (!currentUser) return;
 
     const timer = setInterval(() => {
-      fetchData();
-    }, refreshInterval * 1000);
+      void fetchData();
+    }, 10000); // 10 seconds
 
     return () => clearInterval(timer);
-  }, [currentUser, refreshInterval, fetchData]);
+  }, [currentUser, fetchData]);
 
-  const handleManualRefresh = useCallback(() => {
+  const handleManualRefresh = useCallback(async () => {
+    if (isRefreshing) return;
     setIsRefreshing(true);
-    void fetchData();
-  }, [fetchData]);
+    const start = Date.now();
+    try {
+      await fetchData();
+      showToast('Recent values updated successfully', 'success');
+    } catch {
+      showToast('Failed to refresh data', 'error');
+    } finally {
+      const remaining = Math.max(0, 500 - (Date.now() - start));
+      setTimeout(() => {
+        setIsRefreshing(false);
+      }, remaining);
+    }
+  }, [isRefreshing, fetchData]);
 
   const handleTransactionSubmitted = (tx: Transaction) => {
+    // Immediately add the new transaction to local state so visual diagrams update synchronously
+    setTransactions((prev) => [tx, ...prev.filter((t) => t.id !== tx.id)]);
+    setStats((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        totalTransactions: prev.totalTransactions + 1,
+        pendingTransactions: prev.pendingTransactions + 1,
+      };
+    });
     showToast(`Transaction ${tx.id.substring(0, 8)}... created successfully`);
+    // Synchronize with backend immediately and after worker claims & completes record
     void fetchData();
+    setTimeout(() => void fetchData(), 500);
+    setTimeout(() => void fetchData(), 1500);
   };
 
   const toastElement = toast ? (
@@ -172,8 +198,6 @@ export function App() {
         onTabChange={setActiveTab}
         queueDepth={stats?.redisQueueBacklog || 0}
         circuitBreakerState={circuitBreaker?.state || 'CLOSED'}
-        currentUser={currentUser}
-        onLogout={handleLogout}
       />
 
       {/* Main Content Area */}
@@ -183,8 +207,6 @@ export function App() {
           onOpenSubmitModal={() => setIsSubmitModalOpen(true)}
           onRefresh={handleManualRefresh}
           isRefreshing={isRefreshing}
-          refreshInterval={refreshInterval}
-          onRefreshIntervalChange={setRefreshInterval}
           isConnected={isConnected}
           alertCount={stats?.activeAlertsCount || 0}
           currentUser={currentUser}
@@ -246,6 +268,7 @@ export function App() {
           {activeTab === 'circuit-breaker' && (
             <CircuitBreakerPage
               circuitBreaker={circuitBreaker}
+              transactions={transactions}
               isLoading={isLoading}
               onRefresh={handleManualRefresh}
             />
@@ -254,13 +277,14 @@ export function App() {
           {activeTab === 'rate-limit' && (
             <RateLimitPage
               rateLimit={rateLimit}
+              transactions={transactions}
               isLoading={isLoading}
               onRefresh={handleManualRefresh}
             />
           )}
 
           {(activeTab === 'csv-batch' || activeTab === 'load-test') && (
-            <CsvBatchPage onDataProcessed={handleManualRefresh} />
+            <CsvBatchPage onDataProcessed={handleManualRefresh} transactions={transactions} />
           )}
         </main>
       </div>

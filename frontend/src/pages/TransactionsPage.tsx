@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Transaction } from '../api/types';
 import { TransactionTable } from '../components/transactions/TransactionTable';
+import { TransactionsVisualDiagram } from '../components/charts/TransactionsVisualDiagram';
 import { Plus, RefreshCw } from 'lucide-react';
 
 interface TransactionsPageProps {
@@ -54,6 +55,14 @@ export const TransactionsPage: React.FC<TransactionsPageProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Visual Diagram of Past Transactions */}
+      <TransactionsVisualDiagram
+        transactions={transactions}
+        statusFilter={statusFilter}
+        onStatusFilterChange={onStatusFilterChange}
+        isLoading={isLoading}
+      />
 
       {/* Full Transaction Table */}
       <TransactionTable

@@ -5,8 +5,6 @@ import {
   ShieldAlert,
   Gauge,
   FileSpreadsheet,
-  ExternalLink,
-  LogOut,
 } from 'lucide-react';
 import openfabricLogo from '../../assets/openfabric-logo.png';
 
@@ -17,8 +15,6 @@ interface SidebarProps {
   onTabChange: (tab: NavTab) => void;
   queueDepth: number;
   circuitBreakerState: string;
-  currentUser?: string | null;
-  onLogout?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -26,8 +22,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onTabChange,
   queueDepth,
   circuitBreakerState,
-  currentUser,
-  onLogout,
 }) => {
   const navItems = [
     {
@@ -119,40 +113,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
 
-        <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 px-1">
-          <span>Transactional Outbox</span>
-          <a
-            href="http://localhost:8081/swagger-ui.html"
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1 hover:text-blue-600 font-medium"
-          >
-            Swagger Docs <ExternalLink className="w-3 h-3" />
-          </a>
-        </div>
-
-        {currentUser && (
-          <div className="mt-3 pt-3 border-t border-slate-200/70 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-blue-600 text-white font-bold flex items-center justify-center text-xs shadow-xs">
-                {currentUser.charAt(0).toUpperCase()}
-              </div>
-              <div className="text-left">
-                <span className="text-xs font-bold text-slate-800 block leading-tight">{currentUser}</span>
-                <span className="text-[10px] text-slate-400 font-medium block">Operator</span>
-              </div>
-            </div>
-            {onLogout && (
-              <button
-                onClick={onLogout}
-                title="Sign out"
-                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </aside>
   );

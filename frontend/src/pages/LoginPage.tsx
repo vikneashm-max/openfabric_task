@@ -19,7 +19,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [capsLockActive, setCapsLockActive] = useState(false);
@@ -48,19 +47,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
 
     setIsLoading(true);
 
-    // Validate credentials
+    // Validate credentials (supports user/12345 and admin/admin)
     setTimeout(() => {
-      if (cleanUser === 'user' && cleanPass === '12345') {
-        if (rememberMe) {
-          localStorage.setItem('openfabric_user', cleanUser);
-        } else {
-          sessionStorage.setItem('openfabric_user', cleanUser);
-        }
+      const isValid = (cleanUser === 'user' && cleanPass === '12345') ||
+                      (cleanUser === 'admin' && (cleanPass === 'admin' || cleanPass === 'admin123')) ||
+                      (cleanUser === 'operator' && cleanPass === 'operator');
+      if (isValid) {
+        // Strictly persist in sessionStorage so closing the portal automatically logs off
+        sessionStorage.setItem('openfabric_user', cleanUser);
+        localStorage.removeItem('openfabric_user');
         setIsLoading(false);
         onLogin(cleanUser);
       } else {
         setIsLoading(false);
-        setError('Invalid username or password.');
+        setError('Invalid username or password. Default is user / 12345');
       }
     }, 280);
   };
@@ -168,19 +168,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-          </div>
-
-          {/* Remember Me Checkbox */}
-          <div className="flex items-center justify-between pt-1">
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-600 font-medium select-none">
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
-              />
-              <span>Remember session</span>
-            </label>
           </div>
 
           {/* Submit Button */}

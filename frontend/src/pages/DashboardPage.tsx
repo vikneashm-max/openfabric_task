@@ -65,6 +65,50 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     timeSeries: [],
   };
 
+  // Ensure visual diagrams dynamically add any newly created transactions and represent all ledger records
+  const effectiveTimeSeries = React.useMemo(() => {
+    if (transactions && transactions.length > 0) {
+      const sorted = [...transactions].sort(
+        (a, b) => new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime()
+      );
+      const minTime = new Date(sorted[0].submittedAt).getTime();
+      const maxTime = new Date(sorted[sorted.length - 1].submittedAt).getTime();
+      const span = Math.max(maxTime - minTime, 60000);
+      const bucketSize = span / 6;
+
+      return Array.from({ length: 6 }, (_, i) => {
+        const bStart = minTime + i * bucketSize;
+        const bEnd = i === 5 ? maxTime + 1000 : minTime + (i + 1) * bucketSize;
+        const inB = sorted.filter((tx) => {
+          const t = new Date(tx.submittedAt).getTime();
+          return t >= bStart && t <= bEnd;
+        });
+        const completed = inB.filter((tx) => tx.status === 'COMPLETED').length;
+        const failed = inB.filter((tx) => tx.status === 'FAILED').length;
+        const pending = inB.filter((tx) => tx.status === 'PENDING' || tx.status === 'PROCESSING').length;
+        const compWithLat = inB.filter((tx) => tx.status === 'COMPLETED' && tx.completedAt);
+        const avgLat = compWithLat.length > 0
+          ? compWithLat.reduce((sum, tx) => sum + Math.max(0, new Date(tx.completedAt!).getTime() - new Date(tx.submittedAt).getTime()), 0) / compWithLat.length
+          : 0;
+
+        const date = new Date(bStart);
+        const hours = String(date.getHours()).padStart(2, '0');
+        const mins = String(date.getMinutes()).padStart(2, '0');
+
+        return {
+          timestamp: `${hours}:${mins}`,
+          completed,
+          failed,
+          pending,
+          avgLatencyMs: Math.round(avgLat * 10) / 10,
+          transactions: inB,
+        };
+      });
+    }
+
+    return s.timeSeries;
+  }, [transactions, s.timeSeries]);
+
   return (
     <div className="space-y-6">
       {/* Alert Banners (if any) */}
@@ -230,13 +274,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
           <h3 className="text-sm font-bold text-slate-900 mb-1">Transaction Volume Over Time</h3>
           <p className="text-xs text-slate-500 mb-4">Completed, failed, and pending transactions in 5-minute buckets</p>
-          <VolumeChart data={s.timeSeries} isLoading={isLoading && !stats} />
+          <VolumeChart data={effectiveTimeSeries} transactions={transactions} isLoading={isLoading && !stats} />
         </div>
 
         <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
           <h3 className="text-sm font-bold text-slate-900 mb-1">Processing Time & Latency (s)</h3>
           <p className="text-xs text-slate-500 mb-4">Duration from client submission through worker completion</p>
-          <LatencyChart data={s.timeSeries} isLoading={isLoading && !stats} />
+          <LatencyChart data={effectiveTimeSeries} transactions={transactions} isLoading={isLoading && !stats} />
         </div>
       </div>
 

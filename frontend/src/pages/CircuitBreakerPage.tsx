@@ -1,16 +1,19 @@
 import React from 'react';
-import type { CircuitBreaker } from '../api/types';
+import type { CircuitBreaker, Transaction } from '../api/types';
 import { CircuitBreakerPanel } from '../components/circuitBreaker/CircuitBreakerPanel';
+import { CircuitBreakerVisualDiagram } from '../components/charts/CircuitBreakerVisualDiagram';
 import { Info, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 interface CircuitBreakerPageProps {
   circuitBreaker: CircuitBreaker | null;
+  transactions?: Transaction[];
   isLoading: boolean;
   onRefresh: () => void;
 }
 
 export const CircuitBreakerPage: React.FC<CircuitBreakerPageProps> = ({
   circuitBreaker,
+  transactions = [],
   isLoading,
   onRefresh,
 }) => {
@@ -29,6 +32,13 @@ export const CircuitBreakerPage: React.FC<CircuitBreakerPageProps> = ({
         circuitBreaker={circuitBreaker}
         isLoading={isLoading}
         onRefresh={onRefresh}
+      />
+
+      {/* Visual Diagram of Past Downstream Transactions */}
+      <CircuitBreakerVisualDiagram
+        circuitBreaker={circuitBreaker}
+        transactions={transactions}
+        isLoading={isLoading}
       />
 
       {/* Technical Architecture & Operational Guide */}

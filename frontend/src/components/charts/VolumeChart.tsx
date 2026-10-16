@@ -1,12 +1,25 @@
-import React from 'react';
-import type { TimeSeriesPoint } from '../../api/types';
+import React, { useState } from 'react';
+import type { TimeSeriesPoint, Transaction } from '../../api/types';
+import { formatTimeTaken } from '../../utils/transactionFormat';
+import { TransactionHoverTooltip, type TransactionHoverDetails } from '../common/TransactionHoverTooltip';
+
+export interface DetailedTimeSeriesPoint extends TimeSeriesPoint {
+  transactions?: Transaction[];
+}
 
 interface VolumeChartProps {
-  data: TimeSeriesPoint[];
+  data: DetailedTimeSeriesPoint[];
+  transactions?: Transaction[];
   isLoading?: boolean;
 }
 
-export const VolumeChart: React.FC<VolumeChartProps> = ({ data, isLoading = false }) => {
+export const VolumeChart: React.FC<VolumeChartProps> = ({
+  data,
+  transactions = [],
+  isLoading = false,
+}) => {
+  const [hoveredDetails, setHoveredDetails] = useState<TransactionHoverDetails | null>(null);
+
   if (isLoading) {
     return (
       <div className="h-64 flex items-center justify-center bg-slate-50/50 rounded-xl border border-slate-100 animate-pulse">
@@ -39,8 +52,35 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({ data, isLoading = fals
 
   const stepX = innerWidth / Math.max(data.length - 1, 1);
 
+  const handleHover = (point: DetailedTimeSeriesPoint, statusFilter?: 'COMPLETED' | 'FAILED' | 'PENDING') => {
+    const pool = point.transactions && point.transactions.length > 0 ? point.transactions : transactions;
+    let match = statusFilter ? pool.find((t) => t.status === statusFilter) : pool[0];
+    if (!match && pool.length > 0) match = pool[0];
+
+    if (match) {
+      setHoveredDetails({
+        id: match.id,
+        amt: match.amount,
+        currency: match.currency,
+        status: match.status,
+        timeTaken: formatTimeTaken(match),
+        title: `${point.timestamp} • ${statusFilter || match.status} Volume`,
+        note: pool.length > 1 ? `Window total: ${point.completed} completed, ${point.failed} failed, ${point.pending} pending` : undefined,
+      });
+    } else {
+      setHoveredDetails({
+        id: `txn-${point.timestamp.replace(':', '')}`,
+        amt: '0.00',
+        currency: 'INR',
+        status: statusFilter || 'COMPLETED',
+        timeTaken: `${point.avgLatencyMs}ms`,
+        title: `${point.timestamp} Summary`,
+      });
+    }
+  };
+
   return (
-    <div className="w-full">
+    <div className="w-full relative">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-4 text-xs font-medium">
           <div className="flex items-center gap-1.5">
@@ -56,8 +96,15 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({ data, isLoading = fals
             <span className="text-slate-600">Pending</span>
           </div>
         </div>
-        <span className="text-[11px] text-slate-400 font-mono">Last 30 mins (5m buckets)</span>
+        <span className="text-[11px] text-slate-400 font-mono">Past & Live Transaction Activity</span>
       </div>
+
+      {/* Floating Hover Details for Bar Points */}
+      {hoveredDetails && (
+        <div className="absolute top-10 right-4 z-40 max-w-xs shadow-2xl">
+          <TransactionHoverTooltip details={hoveredDetails} />
+        </div>
+      )}
 
       <div className="relative w-full overflow-x-auto">
         <svg
@@ -101,14 +148,23 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({ data, isLoading = fals
             const hPending = (point.pending / maxVal) * innerHeight;
 
             return (
-              <g key={idx} className="group cursor-pointer">
+              <g
+                key={idx}
+                className="group cursor-pointer"
+                onMouseEnter={() => handleHover(point)}
+                onMouseLeave={() => setHoveredDetails(null)}
+              >
                 {/* Completed bar */}
                 <rect
                   x={centerX - barWidth * 1.5 - 2}
                   y={paddingY + innerHeight - hCompleted}
                   width={barWidth}
-                  height={Math.max(hCompleted, 2)}
+                  height={Math.max(hCompleted, point.completed > 0 ? 3 : 0)}
                   rx="2"
+                  onMouseEnter={(e) => {
+                    e.stopPropagation();
+                    handleHover(point, 'COMPLETED');
+                  }}
                   className="fill-emerald-500 hover:fill-emerald-600 transition-colors"
                 />
                 {/* Failed bar */}
@@ -118,6 +174,10 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({ data, isLoading = fals
                   width={barWidth}
                   height={Math.max(hFailed, point.failed > 0 ? 2 : 0)}
                   rx="2"
+                  onMouseEnter={(e) => {
+                    e.stopPropagation();
+                    handleHover(point, 'FAILED');
+                  }}
                   className="fill-rose-500 hover:fill-rose-600 transition-colors"
                 />
                 {/* Pending bar */}
@@ -127,6 +187,10 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({ data, isLoading = fals
                   width={barWidth}
                   height={Math.max(hPending, point.pending > 0 ? 2 : 0)}
                   rx="2"
+                  onMouseEnter={(e) => {
+                    e.stopPropagation();
+                    handleHover(point, 'PENDING');
+                  }}
                   className="fill-amber-400 hover:fill-amber-500 transition-colors"
                 />
 

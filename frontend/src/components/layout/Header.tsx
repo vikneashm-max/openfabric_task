@@ -1,12 +1,10 @@
 import React from 'react';
-import { Plus, RefreshCw, Radio, Bell, User, LogOut } from 'lucide-react';
+import { Plus, RefreshCw, Bell, User, LogOut } from 'lucide-react';
 
 interface HeaderProps {
   onOpenSubmitModal: () => void;
   onRefresh: () => void;
   isRefreshing: boolean;
-  refreshInterval: number; // in seconds, 0 = paused
-  onRefreshIntervalChange: (sec: number) => void;
   isConnected?: boolean;
   alertCount: number;
   currentUser?: string | null;
@@ -17,8 +15,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSubmitModal,
   onRefresh,
   isRefreshing,
-  refreshInterval,
-  onRefreshIntervalChange,
   alertCount,
   currentUser,
   onLogout,
@@ -45,30 +41,29 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         )}
 
-        {/* Auto Refresh Selector */}
-        <div className="flex items-center gap-1.5 text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-          <Radio className={`w-3.5 h-3.5 ${refreshInterval > 0 ? 'text-emerald-600 animate-pulse' : 'text-slate-400'}`} />
-          <span className="hidden md:inline font-medium">Auto-refresh:</span>
-          <select
-            value={refreshInterval}
-            onChange={(e) => onRefreshIntervalChange(Number(e.target.value))}
-            className="bg-transparent font-medium text-slate-700 focus:outline-none cursor-pointer"
-          >
-            <option value={0}>Paused</option>
-            <option value={2}>2s</option>
-            <option value={5}>5s</option>
-            <option value={10}>10s</option>
-          </select>
+        {/* Fixed 10s Auto-Refresh Indicator */}
+        <div
+          className="flex items-center gap-2 text-xs bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 shadow-2xs select-none"
+          title="System automatically updates recent values every 10 seconds"
+        >
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <span className="text-[11px] font-medium text-slate-600 hidden sm:inline">Auto-refresh:</span>
+          <span className="font-mono font-bold text-emerald-700 text-[11px]">10s</span>
         </div>
 
         {/* Manual Refresh Button */}
         <button
+          id="manual-refresh-btn"
           onClick={onRefresh}
           disabled={isRefreshing}
-          className="p-2 text-slate-600 hover:text-blue-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors shadow-2xs"
-          title="Manual Refresh"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-blue-700 bg-white hover:bg-blue-50/60 border border-slate-200 hover:border-blue-300 rounded-lg transition-all shadow-2xs active:scale-95 disabled:opacity-60 cursor-pointer"
+          title="Update recent values immediately"
         >
-          <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
+          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-600' : 'text-slate-500'}`} />
+          <span className="font-medium hidden sm:inline">Refresh</span>
         </button>
 
         {/* Submit Transaction Button */}
