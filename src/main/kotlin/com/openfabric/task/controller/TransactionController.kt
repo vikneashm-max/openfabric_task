@@ -31,6 +31,17 @@ class TransactionController(
             .body(transaction)
     }
 
+    @GetMapping
+    fun listTransactions(
+        @org.springframework.web.bind.annotation.RequestParam(required = false) status: com.openfabric.task.entity.TransactionStatus?,
+        @org.springframework.web.bind.annotation.RequestParam(defaultValue = "0") page: Int,
+        @org.springframework.web.bind.annotation.RequestParam(defaultValue = "50") limit: Int,
+        @org.springframework.web.bind.annotation.RequestParam(required = false) search: String?
+    ): ResponseEntity<List<TransactionEntity>> {
+        val list = transactionService.listTransactions(status = status, page = page, size = limit, search = search)
+        return ResponseEntity.ok(list)
+    }
+
     @GetMapping("/{id}")
     fun getTransaction(
         @PathVariable id: String
@@ -41,3 +52,4 @@ class TransactionController(
         return ResponseEntity.ok(transaction)
     }
 }
+

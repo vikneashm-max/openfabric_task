@@ -301,4 +301,155 @@ class TransactionEndToEndIntegrationTest {
         val recoveredOutbox = outboxRepository.findById(txnId).orElse(null)
         assertEquals(OutboxStatus.COMPLETED, recoveredOutbox!!.status)
     }
+
+    @Test
+    fun `scenario 1 - resubmitting identical transaction returns 202 Accepted without duplicate outbox or queue entries`() {
+        val txnId = "550e8400-e29b-41d4-a716-446655440000"
+        val timestamp = Instant.parse("2026-10-16T10:00:00Z")
+        val request = CreateTransactionRequest(
+            id = txnId,
+            amount = BigDecimal("500.00"),
+            currency = "INR",
+            description = "Demo payment",
+            timestamp = timestamp
+        )
+
+        // 1. First submission
+        mockMvc.perform(
+            post("/api/transactions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+        )
+            .andExpect(status().isAccepted)
+            .andExpect(jsonPath("$.id").value(txnId))
+            .andExpect(jsonPath("$.status").value("PENDING"))
+
+        // 2. Dispatch and process to COMPLETED
+        outboxDispatcher.dispatchPendingTransactions()
+        assertEquals(1, inMemoryQueue.size)
+        Mockito.doNothing().`when`(postingGateway).postTransaction(anyObj())
+        transactionWorker.processNextTransaction()
+
+        val completedTx = transactionRepository.findById(txnId).orElse(null)
+        assertNotNull(completedTx)
+        assertEquals(TransactionStatus.COMPLETED, completedTx!!.status)
+
+        // Clear in-memory queue to verify no new messages are queued
+        inMemoryQueue.clear()
+
+        // 3. Second submission of identical data
+        mockMvc.perform(
+            post("/api/transactions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+        )
+            .andExpect(status().isAccepted)
+            .andExpect(jsonPath("$.id").value(txnId))
+            .andExpect(jsonPath("$.status").value("COMPLETED"))
+            .andExpect(jsonPath("$.amount").value(500.00))
+            .andExpect(jsonPath("$.currency").value("INR"))
+
+        // Verify no duplicate outbox entry was created
+        val allOutbox = outboxRepository.findAll().filter { it.transactionId == txnId }
+        assertEquals(1, allOutbox.size)
+        assertEquals(OutboxStatus.COMPLETED, allOutbox[0].status)
+
+        // Dispatcher should have nothing new to push
+        outboxDispatcher.dispatchPendingTransactions()
+        assertEquals(0, inMemoryQueue.size)
+    }
+
+    @Test
+    fun `scenario 2 - submitting different data for existing transaction UUID returns 409 Conflict`() {
+        val txnId = UUID.randomUUID().toString()
+        val timestamp = Instant.parse("2026-10-16T10:00:00Z")
+        val originalRequest = CreateTransactionRequest(
+            id = txnId,
+            amount = BigDecimal("500.00"),
+            currency = "INR",
+            description = "Demo payment",
+            timestamp = timestamp
+        )
+
+        // 1. Initial submission
+        mockMvc.perform(
+            post("/api/transactions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(originalRequest))
+        ).andExpect(status().isAccepted)
+
+        // 2. Conflicting submissions with modified fields:
+        // Case A: Different amount
+        val differentAmount = originalRequest.copy(amount = BigDecimal("750.00"))
+        mockMvc.perform(
+            post("/api/transactions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(differentAmount))
+        )
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.error").value("Transaction ID already exists with different data"))
+
+        // Case B: Different currency
+        val differentCurrency = originalRequest.copy(currency = "USD")
+        mockMvc.perform(
+            post("/api/transactions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(differentCurrency))
+        )
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.error").value("Transaction ID already exists with different data"))
+
+        // Case C: Different description
+        val differentDescription = originalRequest.copy(description = "Fraudulent alteration")
+        mockMvc.perform(
+            post("/api/transactions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(differentDescription))
+        )
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.error").value("Transaction ID already exists with different data"))
+
+        // Case D: Different timestamp (1 hour apart)
+        val differentTimestamp = originalRequest.copy(timestamp = timestamp.plusSeconds(3600))
+        mockMvc.perform(
+            post("/api/transactions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(differentTimestamp))
+        )
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.error").value("Transaction ID already exists with different data"))
+    }
+
+    @Test
+    fun `scenario 3 - submitting transaction with new UUID is accepted normally`() {
+        val txnId = UUID.randomUUID().toString()
+        val timestamp = Instant.parse("2026-10-16T10:00:00Z")
+        val request = CreateTransactionRequest(
+            id = txnId,
+            amount = BigDecimal("350.00"),
+            currency = "EUR",
+            description = "New UUID test",
+            timestamp = timestamp
+        )
+
+        mockMvc.perform(
+            post("/api/transactions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+        )
+            .andExpect(status().isAccepted)
+            .andExpect(jsonPath("$.id").value(txnId))
+            .andExpect(jsonPath("$.status").value("PENDING"))
+            .andExpect(jsonPath("$.amount").value(350.00))
+            .andExpect(jsonPath("$.currency").value("EUR"))
+
+        val txInDb = transactionRepository.findById(txnId).orElse(null)
+        assertNotNull(txInDb)
+        assertEquals(TransactionStatus.PENDING, txInDb!!.status)
+
+        val outboxInDb = outboxRepository.findById(txnId).orElse(null)
+        assertNotNull(outboxInDb)
+        assertEquals(OutboxStatus.PENDING, outboxInDb!!.status)
+    }
 }
+

@@ -92,6 +92,7 @@ class TransactionSubmissionLatencyTest {
                 try {
                     val result = mockMvc.perform(
                         post("/api/transactions")
+                            .header("X-Bypass-Rate-Limit", "true")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(body)
                     ).andReturn()

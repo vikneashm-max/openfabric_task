@@ -6,6 +6,7 @@ import jakarta.persistence.Entity
 import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.Id
+import jakarta.persistence.Index
 import jakarta.persistence.Table
 import java.time.Instant
 
@@ -19,7 +20,13 @@ enum class OutboxStatus {
 
 
 @Entity
-@Table(name = "transaction_outbox")
+@Table(
+    name = "transaction_outbox",
+    indexes = [
+        Index(name = "idx_outbox_status_created_at", columnList = "status, createdAt"),
+        Index(name = "idx_outbox_status_locked_until", columnList = "status, lockedUntil")
+    ]
+)
 class OutboxEntity(
 
     @Id

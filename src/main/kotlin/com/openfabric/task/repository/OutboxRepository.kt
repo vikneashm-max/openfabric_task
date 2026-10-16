@@ -3,6 +3,8 @@ package com.openfabric.task.repository
 
 import com.openfabric.task.entity.OutboxEntity
 import com.openfabric.task.entity.OutboxStatus
+import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
@@ -14,6 +16,18 @@ interface OutboxRepository : JpaRepository<OutboxEntity, String> {
 
     fun findTop100ByStatusOrderByCreatedAtAsc(
         status: OutboxStatus
+    ): List<OutboxEntity>
+
+    @Query("""
+        SELECT o FROM OutboxEntity o 
+        WHERE o.status = :status 
+          AND (o.nextAttemptAt IS NULL OR o.nextAttemptAt <= :now) 
+        ORDER BY o.createdAt ASC
+    """)
+    fun findEligiblePending(
+        @Param("status") status: OutboxStatus,
+        @Param("now") now: Instant,
+        pageable: Pageable = PageRequest.of(0, 100)
     ): List<OutboxEntity>
 
     fun findByStatusAndLockedUntilBefore(

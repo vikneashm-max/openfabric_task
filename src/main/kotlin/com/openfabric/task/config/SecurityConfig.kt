@@ -8,33 +8,49 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.web.SecurityFilterChain
+import org.springframework.web.cors.CorsConfiguration
+import org.springframework.web.cors.CorsConfigurationSource
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 
 @Configuration
 @EnableWebSecurity
 class SecurityConfig {
 
     @Bean
+    fun corsConfigurationSource(): CorsConfigurationSource {
+        val configuration = CorsConfiguration().apply {
+            allowedOriginPatterns = listOf("*")
+            allowedMethods = listOf("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH")
+            allowedHeaders = listOf("*")
+            allowCredentials = true
+            maxAge = 3600L
+        }
+        val source = UrlBasedCorsConfigurationSource()
+        source.registerCorsConfiguration("/**", configuration)
+        return source
+    }
+
+    @Bean
     fun securityFilterChain(
         http: HttpSecurity
     ): SecurityFilterChain {
         http
+            .cors { it.configurationSource(corsConfigurationSource()) }
             .csrf { it.disable() }
             .authorizeHttpRequests {
                 it.requestMatchers(
                     "/swagger-ui/**",
                     "/swagger-ui.html",
                     "/v3/api-docs/**",
-                    "/actuator/health"
+                    "/actuator/**"
                 ).permitAll()
 
                 it.requestMatchers(
-                    HttpMethod.POST,
-                    "/api/transactions"
-                ).permitAll()
-
-                it.requestMatchers(
-                    HttpMethod.GET,
-                    "/api/transactions/**"
+                    "/api/transactions",
+                    "/api/transactions/**",
+                    "/api/monitoring/**",
+                    "/api/circuit-breaker/**",
+                    "/api/rate-limit/**"
                 ).permitAll()
 
                 it.anyRequest().authenticated()
@@ -48,3 +64,4 @@ class SecurityConfig {
         return http.build()
     }
 }
+

@@ -6,6 +6,7 @@ import com.openfabric.task.entity.TransactionStatus
 import com.openfabric.task.repository.OutboxRepository
 import com.openfabric.task.repository.TransactionRepository
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
@@ -13,7 +14,7 @@ import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
 
 @Component
-class OutboxDispatcher(
+class OutboxDispatcher @Autowired constructor(
     private val outboxRepository: OutboxRepository,
     private val redisTemplate: StringRedisTemplate,
     private val transactionRepository: TransactionRepository? = null
@@ -23,11 +24,24 @@ class OutboxDispatcher(
 
     @Scheduled(fixedDelay = 1000)
     fun dispatchPendingTransactions() {
-        val pending = outboxRepository
-            .findTop100ByStatusOrderByCreatedAtAsc(OutboxStatus.PENDING)
-        logger.info("Dispatcher found {} pending outbox records", pending.size)
-
         val now = Instant.now()
+
+        val eligible = try {
+            outboxRepository.findEligiblePending(OutboxStatus.PENDING, now)
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        val pending = if (eligible.isNotEmpty()) {
+            eligible
+        } else {
+            outboxRepository.findTop100ByStatusOrderByCreatedAtAsc(OutboxStatus.PENDING)
+                .filter { it.nextAttemptAt == null || !it.nextAttemptAt!!.isAfter(now) }
+        }
+
+        if (pending.isNotEmpty()) {
+            logger.info("Dispatcher found {} pending outbox records", pending.size)
+        }
 
         for (item in pending) {
             // Don't dispatch a transaction before its retry time.
@@ -65,6 +79,16 @@ class OutboxDispatcher(
                     )
                     item.status = OutboxStatus.FAILED
                     item.lockedUntil = null
+                    item.workerId = null
+                    outboxRepository.save(item)
+                    continue
+                } else if (transaction.status == TransactionStatus.PROCESSING) {
+                    logger.warn(
+                        "Transaction {} is already PROCESSING; syncing outbox status",
+                        item.transactionId
+                    )
+                    item.status = OutboxStatus.PROCESSING
+                    item.lockedUntil = Instant.now().minusSeconds(1)
                     item.workerId = null
                     outboxRepository.save(item)
                     continue

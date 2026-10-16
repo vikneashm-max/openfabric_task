@@ -317,4 +317,71 @@ class TransactionServiceIntegrationTest {
         assertEquals(TransactionStatus.FAILED, second.status)
         assertEquals("Exhausted all 5 attempts", second.lastError)
     }
+
+    @Test
+    fun `resubmitting identical completed transaction with ISO-8601 timestamp returns existing transaction without duplicating outbox`() {
+        val id = "550e8400-e29b-41d4-a716-446655440000"
+        val timestamp = Instant.parse("2026-10-16T10:00:00Z")
+        val request = CreateTransactionRequest(
+            id = id,
+            amount = BigDecimal("500.00"),
+            currency = "INR",
+            description = "Demo payment",
+            timestamp = timestamp
+        )
+
+        val first = transactionService.submitTransaction(request)
+        assertEquals(TransactionStatus.PENDING, first.status)
+
+        // Simulate transaction completed by worker
+        first.status = TransactionStatus.COMPLETED
+        first.completedAt = Instant.now()
+        transactionRepository.save(first)
+
+        // Resubmit identical request
+        val second = transactionService.submitTransaction(request)
+        assertEquals(id, second.id)
+        assertEquals(TransactionStatus.COMPLETED, second.status)
+        assertEquals(0, BigDecimal("500.00").compareTo(second.amount))
+        assertEquals("INR", second.currency)
+        assertEquals("Demo payment", second.description)
+
+        // Ensure outbox was not duplicated
+        val outboxRecords = outboxRepository.findAll().filter { it.transactionId == id }
+        assertEquals(1, outboxRecords.size)
+    }
+
+    @Test
+    fun `duplicate submission with simulated timezone-shifted timestamp matches existing transaction`() {
+        val id = UUID.randomUUID().toString()
+        val requestTimestamp = Instant.parse("2026-10-16T10:00:00Z")
+        val request = CreateTransactionRequest(
+            id = id,
+            amount = BigDecimal("500.00"),
+            currency = "INR",
+            description = "Timezone tolerance test",
+            timestamp = requestTimestamp
+        )
+
+        val submitted = transactionService.submitTransaction(request)
+        assertEquals(TransactionStatus.PENDING, submitted.status)
+
+        // Simulate SQLite JDBC writing UTC wall clock and reading back with system timezone (e.g. IST +05:30)
+        val systemZone = java.time.ZoneId.systemDefault()
+        val offsetSeconds = systemZone.rules.getOffset(requestTimestamp).totalSeconds
+        submitted.transactionTimestamp = requestTimestamp.minusSeconds(offsetSeconds.toLong())
+        transactionRepository.save(submitted)
+
+        // Resubmit identical request with original timestamp
+        val second = transactionService.submitTransaction(request)
+        assertEquals(id, second.id)
+
+        // Reusing same ID with genuinely different data must still fail
+        val conflictingRequest = request.copy(amount = BigDecimal("999.00"))
+        val ex = assertThrows(IllegalArgumentException::class.java) {
+            transactionService.submitTransaction(conflictingRequest)
+        }
+        assertTrue(ex.message!!.contains("Transaction ID already exists with different data"))
+    }
 }
+
