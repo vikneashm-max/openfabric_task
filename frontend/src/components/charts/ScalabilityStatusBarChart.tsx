@@ -33,6 +33,7 @@ export const ScalabilityStatusBarChart: React.FC<ScalabilityStatusBarChartProps>
 }) => {
   const [activeView, setActiveView] = useState<'status' | 'latency'>('status');
   const [hoveredDetails, setHoveredDetails] = useState<TransactionHoverDetails | null>(null);
+  const [hoverCoords, setHoverCoords] = useState<{ x: number; y: number } | null>(null);
 
   const statusBars = [
     {
@@ -153,11 +154,9 @@ export const ScalabilityStatusBarChart: React.FC<ScalabilityStatusBarChartProps>
 
   return (
     <div className="relative w-full bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
-      {/* Floating Hover Details for any bar */}
+      {/* Floating Hover Details for any bar dynamically anchored to cursor */}
       {hoveredDetails && (
-        <div className="absolute top-14 right-4 z-40 max-w-xs shadow-2xl">
-          <TransactionHoverTooltip details={hoveredDetails} />
-        </div>
+        <TransactionHoverTooltip details={hoveredDetails} coords={hoverCoords} />
       )}
 
       {/* Header with View Toggle */}
@@ -239,8 +238,17 @@ export const ScalabilityStatusBarChart: React.FC<ScalabilityStatusBarChartProps>
                 <g
                   key={idx}
                   className="group cursor-pointer"
-                  onMouseEnter={() => handleBarHover(bar)}
-                  onMouseLeave={() => setHoveredDetails(null)}
+                  onMouseEnter={(e) => {
+                    handleBarHover(bar);
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
+                  }}
+                  onMouseMove={(e) => {
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
+                  }}
+                  onMouseLeave={() => {
+                    setHoveredDetails(null);
+                    setHoverCoords(null);
+                  }}
                 >
                   {/* The bar */}
                   <rect

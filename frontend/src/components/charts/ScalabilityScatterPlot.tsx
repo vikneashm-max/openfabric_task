@@ -26,6 +26,7 @@ export const ScalabilityScatterPlot: React.FC<ScalabilityScatterPlotProps> = ({
   maxPointsToRender = 1000,
 }) => {
   const [hoveredPoint, setHoveredPoint] = useState<BackendScatterPoint | null>(null);
+  const [hoverCoords, setHoverCoords] = useState<{ x: number; y: number } | null>(null);
   const [filterOutliersOnly, setFilterOutliersOnly] = useState(false);
 
   // Filter or sample points if huge
@@ -199,8 +200,17 @@ export const ScalabilityScatterPlot: React.FC<ScalabilityScatterPlotProps> = ({
                 stroke={isHovered ? '#0f172a' : isOutlier ? '#b91c1c' : '#ffffff'}
                 strokeWidth={isHovered ? 2 : isOutlier ? 1.5 : 0.5}
                 className="cursor-pointer transition-transform duration-100"
-                onMouseEnter={() => setHoveredPoint(p)}
-                onMouseLeave={() => setHoveredPoint(null)}
+                onMouseEnter={(e) => {
+                  setHoveredPoint(p);
+                  setHoverCoords({ x: e.clientX, y: e.clientY });
+                }}
+                onMouseMove={(e) => {
+                  setHoverCoords({ x: e.clientX, y: e.clientY });
+                }}
+                onMouseLeave={() => {
+                  setHoveredPoint(null);
+                  setHoverCoords(null);
+                }}
               />
             );
           })}
@@ -223,30 +233,20 @@ export const ScalabilityScatterPlot: React.FC<ScalabilityScatterPlotProps> = ({
           })}
         </svg>
 
-        {/* Floating Tooltip displaying (id, amt, status, time taken) */}
+        {/* Floating Tooltip displaying (id, amt, status, time taken) dynamically anchored to cursor */}
         {hoveredPoint && (
-          <div
-            className="absolute z-30 pointer-events-none max-w-xs shadow-2xl"
-            style={{
-              left: `${Math.min(
-                Math.max((hoveredPoint.index / maxIndex) * 85, 10),
-                70
-              )}%`,
-              top: '10px',
+          <TransactionHoverTooltip
+            coords={hoverCoords}
+            details={{
+              id: hoveredPoint.id,
+              amt: hoveredPoint.amount,
+              currency: hoveredPoint.currency,
+              status: hoveredPoint.status,
+              timeTaken: formatTimeTaken(hoveredPoint),
+              title: `Scatter Point #${hoveredPoint.index}`,
+              note: hoveredPoint.lastError ? `Error: ${hoveredPoint.lastError}` : undefined,
             }}
-          >
-            <TransactionHoverTooltip
-              details={{
-                id: hoveredPoint.id,
-                amt: hoveredPoint.amount,
-                currency: hoveredPoint.currency,
-                status: hoveredPoint.status,
-                timeTaken: formatTimeTaken(hoveredPoint),
-                title: `Scatter Point #${hoveredPoint.index}`,
-                note: hoveredPoint.lastError ? `Error: ${hoveredPoint.lastError}` : undefined,
-              }}
-            />
-          </div>
+          />
         )}
       </div>
     </div>

@@ -22,6 +22,7 @@ export const RateLimitVisualDiagram: React.FC<RateLimitVisualDiagramProps> = ({
   isLoading = false,
 }) => {
   const [hoveredDetails, setHoveredDetails] = useState<TransactionHoverDetails | null>(null);
+  const [hoverCoords, setHoverCoords] = useState<{ x: number; y: number } | null>(null);
 
   const limitPerSec = rateLimit?.limitPerSecond || 100;
   const burstAllowance = limitPerSec * 1.5;
@@ -143,11 +144,9 @@ export const RateLimitVisualDiagram: React.FC<RateLimitVisualDiagramProps> = ({
 
   return (
     <div className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-      {/* Floating Hover Details for any point or bar in the diagram */}
+      {/* Floating Hover Details for any point or bar in the diagram dynamically anchored to cursor */}
       {hoveredDetails && (
-        <div className="absolute top-16 right-6 z-40 max-w-xs shadow-2xl">
-          <TransactionHoverTooltip details={hoveredDetails} />
-        </div>
+        <TransactionHoverTooltip details={hoveredDetails} coords={hoverCoords} />
       )}
 
       {/* Header */}
@@ -220,8 +219,17 @@ export const RateLimitVisualDiagram: React.FC<RateLimitVisualDiagramProps> = ({
 
           <div
             className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2 cursor-pointer hover:border-emerald-300 transition-colors"
-            onMouseEnter={handleMeterHover}
-            onMouseLeave={() => setHoveredDetails(null)}
+            onMouseEnter={(e) => {
+              setHoverCoords({ x: e.clientX, y: e.clientY });
+              handleMeterHover();
+            }}
+            onMouseMove={(e) => {
+              setHoverCoords({ x: e.clientX, y: e.clientY });
+            }}
+            onMouseLeave={() => {
+              setHoveredDetails(null);
+              setHoverCoords(null);
+            }}
           >
             <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
@@ -370,8 +378,17 @@ export const RateLimitVisualDiagram: React.FC<RateLimitVisualDiagramProps> = ({
                   cx={p.x}
                   cy={p.y}
                   r="4"
-                  onMouseEnter={() => handlePointHover(p)}
-                  onMouseLeave={() => setHoveredDetails(null)}
+                  onMouseEnter={(e) => {
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
+                    handlePointHover(p);
+                  }}
+                  onMouseMove={(e) => {
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
+                  }}
+                  onMouseLeave={() => {
+                    setHoveredDetails(null);
+                    setHoverCoords(null);
+                  }}
                   className="fill-white stroke-indigo-600 stroke-2 cursor-pointer hover:r-6 transition-all"
                 />
               ))}

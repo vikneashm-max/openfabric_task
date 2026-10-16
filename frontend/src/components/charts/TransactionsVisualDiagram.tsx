@@ -26,6 +26,7 @@ export const TransactionsVisualDiagram: React.FC<TransactionsVisualDiagramProps>
   isLoading = false,
 }) => {
   const [hoveredTxDetails, setHoveredTxDetails] = useState<TransactionHoverDetails | null>(null);
+  const [hoverCoords, setHoverCoords] = useState<{ x: number; y: number } | null>(null);
 
   const handleHover = (
     bucket: { timeLabel: string; completed: number; failed: number; pending: number; total: number; avgLatency: number; transactions: Transaction[] },
@@ -341,11 +342,9 @@ export const TransactionsVisualDiagram: React.FC<TransactionsVisualDiagramProps>
 
         {/* Visual SVG Timeline Diagram: Volume Bars + Latency Curve */}
         <div className="border border-slate-200/80 rounded-xl p-4 bg-slate-50/50 relative">
-          {/* Floating Tooltip displaying ID, Amt, Status, Time Taken */}
+          {/* Floating Tooltip displaying ID, Amt, Status, Time Taken dynamically anchored to cursor */}
           {hoveredTxDetails && (
-            <div className="absolute top-10 right-4 z-40 max-w-xs shadow-2xl">
-              <TransactionHoverTooltip details={hoveredTxDetails} />
-            </div>
+            <TransactionHoverTooltip details={hoveredTxDetails} coords={hoverCoords} />
           )}
 
           <div className="flex items-center justify-between mb-3">
@@ -415,9 +414,16 @@ export const TransactionsVisualDiagram: React.FC<TransactionsVisualDiagramProps>
                 return (
                   <g
                     key={idx}
-                    onMouseEnter={() => handleHover(bucket)}
+                    onMouseEnter={(e) => {
+                      setHoverCoords({ x: e.clientX, y: e.clientY });
+                      handleHover(bucket);
+                    }}
+                    onMouseMove={(e) => {
+                      setHoverCoords({ x: e.clientX, y: e.clientY });
+                    }}
                     onMouseLeave={() => {
                       setHoveredTxDetails(null);
+                      setHoverCoords(null);
                     }}
                     className="cursor-pointer group"
                   >
@@ -430,7 +436,11 @@ export const TransactionsVisualDiagram: React.FC<TransactionsVisualDiagramProps>
                       rx="3"
                       onMouseEnter={(e) => {
                         e.stopPropagation();
+                        setHoverCoords({ x: e.clientX, y: e.clientY });
                         handleHover(bucket, 'COMPLETED');
+                      }}
+                      onMouseMove={(e) => {
+                        setHoverCoords({ x: e.clientX, y: e.clientY });
                       }}
                       className="fill-emerald-500 group-hover:fill-emerald-600 transition-colors"
                     />
@@ -444,7 +454,11 @@ export const TransactionsVisualDiagram: React.FC<TransactionsVisualDiagramProps>
                         rx="3"
                         onMouseEnter={(e) => {
                           e.stopPropagation();
+                          setHoverCoords({ x: e.clientX, y: e.clientY });
                           handleHover(bucket, 'FAILED');
+                        }}
+                        onMouseMove={(e) => {
+                          setHoverCoords({ x: e.clientX, y: e.clientY });
                         }}
                         className="fill-rose-500 group-hover:fill-rose-600 transition-colors"
                       />
@@ -482,12 +496,17 @@ export const TransactionsVisualDiagram: React.FC<TransactionsVisualDiagramProps>
                   cx={p.x}
                   cy={p.y}
                   r="4"
-                  onMouseEnter={() => {
+                  onMouseEnter={(e) => {
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
                     const b = timelineBuckets[idx];
                     if (b) handleHover(b, 'COMPLETED');
                   }}
+                  onMouseMove={(e) => {
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
+                  }}
                   onMouseLeave={() => {
                     setHoveredTxDetails(null);
+                    setHoverCoords(null);
                   }}
                   className="fill-white stroke-blue-600 stroke-2 hover:r-6 cursor-pointer transition-all"
                 />

@@ -19,6 +19,7 @@ export const LatencyChart: React.FC<LatencyChartProps> = ({
   isLoading = false,
 }) => {
   const [hoveredDetails, setHoveredDetails] = useState<TransactionHoverDetails | null>(null);
+  const [hoverCoords, setHoverCoords] = useState<{ x: number; y: number } | null>(null);
 
   if (isLoading) {
     return (
@@ -99,11 +100,9 @@ export const LatencyChart: React.FC<LatencyChartProps> = ({
         <span className="text-[11px] text-slate-400 font-mono">Max: {(maxVal / 1000).toFixed(3)}s</span>
       </div>
 
-      {/* Floating Hover Details for Latency Points */}
+      {/* Floating Hover Details for Latency Points dynamically anchored to cursor */}
       {hoveredDetails && (
-        <div className="absolute top-10 right-4 z-40 max-w-xs shadow-2xl">
-          <TransactionHoverTooltip details={hoveredDetails} />
-        </div>
+        <TransactionHoverTooltip details={hoveredDetails} coords={hoverCoords} />
       )}
 
       <div className="relative w-full overflow-x-auto">
@@ -165,8 +164,17 @@ export const LatencyChart: React.FC<LatencyChartProps> = ({
             <g
               key={idx}
               className="group cursor-pointer"
-              onMouseEnter={() => handlePointHover(p.point)}
-              onMouseLeave={() => setHoveredDetails(null)}
+              onMouseEnter={(e) => {
+                setHoverCoords({ x: e.clientX, y: e.clientY });
+                handlePointHover(p.point);
+              }}
+              onMouseMove={(e) => {
+                setHoverCoords({ x: e.clientX, y: e.clientY });
+              }}
+              onMouseLeave={() => {
+                setHoveredDetails(null);
+                setHoverCoords(null);
+              }}
             >
               <circle
                 cx={p.x}

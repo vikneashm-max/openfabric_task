@@ -26,6 +26,7 @@ export const ScalabilityRateLineChart: React.FC<ScalabilityRateLineChartProps> =
 }) => {
   const [hoveredPoint, setHoveredPoint] = useState<RateTimePoint | null>(null);
   const [hoveredDetails, setHoveredDetails] = useState<TransactionHoverDetails | null>(null);
+  const [hoverCoords, setHoverCoords] = useState<{ x: number; y: number } | null>(null);
 
   if (isLoading) {
     return (
@@ -211,10 +212,17 @@ export const ScalabilityRateLineChart: React.FC<ScalabilityRateLineChartProps> =
                   cy={p.y}
                   r={isHovered ? 6 : 3.5}
                   className="fill-white stroke-indigo-600 stroke-2 cursor-pointer transition-all duration-150"
-                  onMouseEnter={() => handlePointHover(p)}
+                  onMouseEnter={(e) => {
+                    handlePointHover(p);
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
+                  }}
+                  onMouseMove={(e) => {
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
+                  }}
                   onMouseLeave={() => {
                     setHoveredPoint(null);
                     setHoveredDetails(null);
+                    setHoverCoords(null);
                   }}
                 />
               </g>
@@ -239,20 +247,9 @@ export const ScalabilityRateLineChart: React.FC<ScalabilityRateLineChartProps> =
           })}
         </svg>
 
-        {/* Hover Tooltip Overlay displaying (id, amt, status, time taken) */}
+        {/* Hover Tooltip Overlay displaying (id, amt, status, time taken) dynamically anchored to cursor */}
         {hoveredDetails && (
-          <div
-            className="absolute z-30 pointer-events-none max-w-xs shadow-2xl"
-            style={{
-              left: `${Math.min(
-                Math.max(((hoveredPoint?.timeSec || 0) / maxTime) * 75 + 5, 5),
-                70
-              )}%`,
-              top: '10px',
-            }}
-          >
-            <TransactionHoverTooltip details={hoveredDetails} />
-          </div>
+          <TransactionHoverTooltip details={hoveredDetails} coords={hoverCoords} />
         )}
       </div>
     </div>

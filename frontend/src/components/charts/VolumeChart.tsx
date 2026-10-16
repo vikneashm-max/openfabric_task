@@ -19,6 +19,7 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({
   isLoading = false,
 }) => {
   const [hoveredDetails, setHoveredDetails] = useState<TransactionHoverDetails | null>(null);
+  const [hoverCoords, setHoverCoords] = useState<{ x: number; y: number } | null>(null);
 
   if (isLoading) {
     return (
@@ -99,11 +100,9 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({
         <span className="text-[11px] text-slate-400 font-mono">Past & Live Transaction Activity</span>
       </div>
 
-      {/* Floating Hover Details for Bar Points */}
+      {/* Floating Hover Details for Bar Points dynamically anchored to cursor */}
       {hoveredDetails && (
-        <div className="absolute top-10 right-4 z-40 max-w-xs shadow-2xl">
-          <TransactionHoverTooltip details={hoveredDetails} />
-        </div>
+        <TransactionHoverTooltip details={hoveredDetails} coords={hoverCoords} />
       )}
 
       <div className="relative w-full overflow-x-auto">
@@ -151,8 +150,17 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({
               <g
                 key={idx}
                 className="group cursor-pointer"
-                onMouseEnter={() => handleHover(point)}
-                onMouseLeave={() => setHoveredDetails(null)}
+                onMouseEnter={(e) => {
+                  setHoverCoords({ x: e.clientX, y: e.clientY });
+                  handleHover(point);
+                }}
+                onMouseMove={(e) => {
+                  setHoverCoords({ x: e.clientX, y: e.clientY });
+                }}
+                onMouseLeave={() => {
+                  setHoveredDetails(null);
+                  setHoverCoords(null);
+                }}
               >
                 {/* Completed bar */}
                 <rect
@@ -163,7 +171,11 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({
                   rx="2"
                   onMouseEnter={(e) => {
                     e.stopPropagation();
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
                     handleHover(point, 'COMPLETED');
+                  }}
+                  onMouseMove={(e) => {
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
                   }}
                   className="fill-emerald-500 hover:fill-emerald-600 transition-colors"
                 />
@@ -176,7 +188,11 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({
                   rx="2"
                   onMouseEnter={(e) => {
                     e.stopPropagation();
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
                     handleHover(point, 'FAILED');
+                  }}
+                  onMouseMove={(e) => {
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
                   }}
                   className="fill-rose-500 hover:fill-rose-600 transition-colors"
                 />
@@ -189,7 +205,11 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({
                   rx="2"
                   onMouseEnter={(e) => {
                     e.stopPropagation();
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
                     handleHover(point, 'PENDING');
+                  }}
+                  onMouseMove={(e) => {
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
                   }}
                   className="fill-amber-400 hover:fill-amber-500 transition-colors"
                 />

@@ -22,6 +22,7 @@ export const CircuitBreakerVisualDiagram: React.FC<CircuitBreakerVisualDiagramPr
   isLoading = false,
 }) => {
   const [hoveredDetails, setHoveredDetails] = useState<TransactionHoverDetails | null>(null);
+  const [hoverCoords, setHoverCoords] = useState<{ x: number; y: number } | null>(null);
 
   // Compute downstream metrics from past transactions
   const metrics = useMemo(() => {
@@ -164,11 +165,9 @@ export const CircuitBreakerVisualDiagram: React.FC<CircuitBreakerVisualDiagramPr
 
   return (
     <div className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-      {/* Floating Hover Details for any point or bar in the diagram */}
+      {/* Floating Hover Details for any point or bar in the diagram dynamically anchored to cursor */}
       {hoveredDetails && (
-        <div className="absolute top-16 right-6 z-40 max-w-xs shadow-2xl">
-          <TransactionHoverTooltip details={hoveredDetails} />
-        </div>
+        <TransactionHoverTooltip details={hoveredDetails} coords={hoverCoords} />
       )}
 
       {/* Header */}
@@ -254,24 +253,51 @@ export const CircuitBreakerVisualDiagram: React.FC<CircuitBreakerVisualDiagramPr
             <div className="grid grid-cols-3 gap-2 pt-1 text-center font-mono">
               <div
                 className="p-2 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-emerald-400 transition-colors"
-                onMouseEnter={() => handleCategoryHover('fast')}
-                onMouseLeave={() => setHoveredDetails(null)}
+                onMouseEnter={(e) => {
+                  setHoverCoords({ x: e.clientX, y: e.clientY });
+                  handleCategoryHover('fast');
+                }}
+                onMouseMove={(e) => {
+                  setHoverCoords({ x: e.clientX, y: e.clientY });
+                }}
+                onMouseLeave={() => {
+                  setHoveredDetails(null);
+                  setHoverCoords(null);
+                }}
               >
                 <span className="text-[10px] text-slate-400 block font-sans">Fast (&lt;100ms)</span>
                 <span className="text-xs font-bold text-emerald-600">{metrics.fastCount}</span>
               </div>
               <div
                 className="p-2 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-blue-400 transition-colors"
-                onMouseEnter={() => handleCategoryHover('normal')}
-                onMouseLeave={() => setHoveredDetails(null)}
+                onMouseEnter={(e) => {
+                  setHoverCoords({ x: e.clientX, y: e.clientY });
+                  handleCategoryHover('normal');
+                }}
+                onMouseMove={(e) => {
+                  setHoverCoords({ x: e.clientX, y: e.clientY });
+                }}
+                onMouseLeave={() => {
+                  setHoveredDetails(null);
+                  setHoverCoords(null);
+                }}
               >
                 <span className="text-[10px] text-slate-400 block font-sans">Normal (100-500ms)</span>
                 <span className="text-xs font-bold text-blue-600">{metrics.normalCount}</span>
               </div>
               <div
                 className="p-2 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-amber-400 transition-colors"
-                onMouseEnter={() => handleCategoryHover('slow')}
-                onMouseLeave={() => setHoveredDetails(null)}
+                onMouseEnter={(e) => {
+                  setHoverCoords({ x: e.clientX, y: e.clientY });
+                  handleCategoryHover('slow');
+                }}
+                onMouseMove={(e) => {
+                  setHoverCoords({ x: e.clientX, y: e.clientY });
+                }}
+                onMouseLeave={() => {
+                  setHoveredDetails(null);
+                  setHoverCoords(null);
+                }}
               >
                 <span className="text-[10px] text-slate-400 block font-sans">Elevated (&gt;500ms)</span>
                 <span className="text-xs font-bold text-amber-600">{metrics.slowCount}</span>
@@ -341,8 +367,17 @@ export const CircuitBreakerVisualDiagram: React.FC<CircuitBreakerVisualDiagramPr
                   cx={p.x}
                   cy={p.y}
                   r="4"
-                  onMouseEnter={() => handlePointHover(p)}
-                  onMouseLeave={() => setHoveredDetails(null)}
+                  onMouseEnter={(e) => {
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
+                    handlePointHover(p);
+                  }}
+                  onMouseMove={(e) => {
+                    setHoverCoords({ x: e.clientX, y: e.clientY });
+                  }}
+                  onMouseLeave={() => {
+                    setHoveredDetails(null);
+                    setHoverCoords(null);
+                  }}
                   className={`cursor-pointer transition-all ${
                     p.status === 'COMPLETED'
                       ? 'fill-emerald-500 stroke-white stroke-1 hover:r-6'

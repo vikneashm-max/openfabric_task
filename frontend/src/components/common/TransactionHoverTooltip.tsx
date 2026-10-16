@@ -10,13 +10,20 @@ export interface TransactionHoverDetails {
   note?: string;
 }
 
+export interface TransactionHoverCoords {
+  x: number;
+  y: number;
+}
+
 interface TransactionHoverTooltipProps {
   details: TransactionHoverDetails | null;
+  coords?: TransactionHoverCoords | null;
   className?: string;
 }
 
 export const TransactionHoverTooltip: React.FC<TransactionHoverTooltipProps> = ({
   details,
+  coords,
   className = '',
 }) => {
   if (!details) return null;
@@ -25,9 +32,43 @@ export const TransactionHoverTooltip: React.FC<TransactionHoverTooltipProps> = (
   const isFailed = details.status === 'FAILED';
   const isProcessing = details.status === 'PROCESSING';
 
+  let positionStyle: React.CSSProperties = {};
+  if (coords) {
+    const tooltipWidth = 270;
+    const tooltipHeight = 175;
+    const offset = 14;
+
+    const viewportW = typeof window !== 'undefined' ? window.innerWidth : 1200;
+    const viewportH = typeof window !== 'undefined' ? window.innerHeight : 800;
+
+    // Flip horizontal if overflowing right edge
+    let left = coords.x + offset;
+    if (left + tooltipWidth > viewportW - 12) {
+      left = Math.max(12, coords.x - tooltipWidth - offset);
+    }
+
+    // Flip vertical if overflowing bottom edge
+    let top = coords.y + offset;
+    if (top + tooltipHeight > viewportH - 12) {
+      top = Math.max(12, coords.y - tooltipHeight - offset);
+    }
+
+    positionStyle = {
+      position: 'fixed',
+      left: `${left}px`,
+      top: `${top}px`,
+      zIndex: 9999,
+      pointerEvents: 'none',
+      width: `${tooltipWidth}px`,
+    };
+  }
+
   return (
     <div
-      className={`bg-slate-900/95 text-white p-3 rounded-xl shadow-2xl border border-slate-700/80 backdrop-blur-md text-xs font-mono space-y-1.5 pointer-events-none z-50 ${className}`}
+      style={positionStyle}
+      className={`bg-slate-900/95 text-white p-3 rounded-xl shadow-2xl border border-slate-700/80 backdrop-blur-md text-xs font-mono space-y-1.5 pointer-events-none transition-all duration-75 ${
+        coords ? 'animate-in fade-in zoom-in-95 duration-100' : `z-50 ${className}`
+      }`}
     >
       {details.title && (
         <div className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider border-b border-slate-800 pb-1 mb-1">
